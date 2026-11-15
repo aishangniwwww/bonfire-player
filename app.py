@@ -407,9 +407,14 @@ def load_state():
 
 
 def save_state(data):
+    """合并写入：只覆盖传进来的键，别把别的设置（球贴边、置顶、圆角…）一起冲掉"""
     try:
+        st = load_state()
+        if not isinstance(st, dict):
+            st = {}
+        st.update(data or {})
         with open(STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f)
+            json.dump(st, f)
     except Exception:
         pass
 
@@ -844,13 +849,16 @@ def apply_top(on):
 
 
 def set_top_hard(on):
-    """置顶最高：除了置 topmost 标记，还每秒把自己重新提到 topmost 带最前"""
+    """置顶最高：自己把窗口压到最前，但不去改「置顶」那个开关的状态。
+    关闭时回到用户自己设的置顶状态。"""
     on = bool(on)
     TOP["hard"] = on
     save_state({"top_hard": on})
     if on:
-        apply_top(True)
-    log_api("set_top_hard -> %s" % on)
+        raw_top(True)
+    elif not TOP["on"]:
+        raw_top(False)
+    log_api("set_top_hard -> %s (on_top=%s)" % (on, TOP["on"]))
     return on
 
 
@@ -975,6 +983,7 @@ def set_round_region(hwnd, size):
     try:
         if not size:
             user32.SetWindowRgn(hwnd, None, True)
+            ROUND["sig"] = None
             return True
         rgn = gdi32.CreateEllipticRgn(0, 0, int(size), int(size))
         if not rgn:
@@ -1094,7 +1103,17 @@ def set_ball(on, css_h=0, css_w=0):
     except Exception:
         pass
     BALL["on"] = False
-    raw_top(bool(TOP["on"]))
+    # 还原后立刻把圆润边框补回去：窗口底色是纯黑，区域一旦空着，
+    # 四个角就会露出黑底（等 1.2s 的心跳再补就有一段黑框）
+    try:
+        ROUND["sig"] = None
+        if ROUND["px"]:
+            set_round_win(hwnd, ROUND["px"])
+        else:
+            _kill_frame_edges(hwnd)
+    except Exception:
+        pass
+    raw_top(bool(TOP["on"] or TOP["hard"]))
     log_api("ball off -> %sx%s top=%s" % (rest[0], target_h, is_topmost(hwnd)))
     keep_inside(hwnd, margin=10)
     return [rest[0], target_h]
@@ -1115,6 +1134,8 @@ def resize_to(css_h):
     if h and abs(target - h) <= 2:
         return h
     user32.SetWindowPos(hwnd, 0, 0, 0, w, target, SWP_NOMOVE | SWP_NOZORDER)
+    # 区域是按旧尺寸算的，改高度后必须重算，否则圆角边上会漏黑底
+    sync_round(hwnd)
     log_api("resize %s -> %s (css %s)" % (h, target, css_h))
     return target
 
@@ -2189,6 +2210,7 @@ def autostart_state():
 
 def autostart_set(on):
     import winreg
+    ok = False
     try:
         with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
             if on:
@@ -2198,9 +2220,12 @@ def autostart_set(on):
                     winreg.DeleteValue(k, RUN_NAME)
                 except FileNotFoundError:
                     pass
-        return {"ok": True, "on": bool(on)}
+        ok = True
     except Exception as e:
         return {"ok": False, "on": False, "why": str(e)}
+    # 记一份到 state.json：下次启动发现注册表被清掉（优化软件、系统清理）能自己补回来
+    save_state({"auto_boot": bool(on)})
+    return {"ok": ok, "on": bool(on)}
 
 
 def _reg_read(path, name):
@@ -3069,7 +3094,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 data["polls"] = HB_COUNT[0]
             data["hwnd"] = bool(hwnd)
             data["rect"] = list(rect_of(hwnd)) if hwnd else None
-            data["on_top"] = is_topmost(hwnd)
+            data["on_top"] = 1 if TOP["on"] else 0      # 用户自己按的置顶
+            data["topmost"] = 1 if is_topmost(hwnd) else 0   # 窗口实际是不是 topmost（置顶最高也会让它变 1）
             data["top_hard"] = 1 if TOP.get("hard") else 0
             data["pending"] = len(PENDING)
             data["folded"] = HB.get("f")
@@ -3136,11 +3162,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 hon = (qs.get("hard") or ["0"])[0] in ("1", "true", "True")
                 set_top_hard(hon)
                 send_json(self, {"ok": True, "hard": hon,
-                                 "on_top": bool(is_topmost(find_hwnd()))})
+                                 "on_top": bool(TOP["on"]),
+                                 "topmost": bool(is_topmost(find_hwnd()))})
                 return
             want = (qs.get("on") or ["1"])[0] in ("1", "true", "True")
             got = apply_top(want)
-            send_json(self, {"ok": got is not None, "on_top": bool(got)})
+            send_json(self, {"ok": got is not None, "on_top": bool(TOP["on"]),
+                             "topmost": bool(is_topmost(find_hwnd()))})
             return
 
         if path == "/move":
@@ -3520,6 +3548,14 @@ def main():
         ROUND["px"] = max(0, min(40, int(st0.get("round_px") or 0)))
     except Exception:
         ROUND["px"] = 0
+    # 开机自启：上次用户开过，但注册表被清理软件抹了，就自己补回去
+    try:
+        if bool(st0.get("auto_boot")) and not autostart_state().get("on"):
+            autostart_set(True)
+            save_state({"auto_boot": True})
+            log_api("autostart self-heal")
+    except Exception as e:
+        log_api("autostart heal fail %r" % e)
     if not claim_single():
         log_api("another instance is alive, woke it up and exit")
         time.sleep(0.15)
@@ -3564,8 +3600,8 @@ def main():
 
     def after_start():
         time.sleep(1.2)
-        if TOP["on"]:
-            apply_top(True)
+        if TOP["on"] or TOP["hard"]:
+            raw_top(True)
         # 球外面那圈白来自 Form 的系统灰底。给窗口开全客户区玻璃，
         # webview 的默认底色（这里设成纯黑）就会透成桌面，且不影响鼠标。
         try:

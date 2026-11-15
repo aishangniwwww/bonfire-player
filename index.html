@@ -1089,7 +1089,7 @@ body[data-glass="1"] .locPanel{background:rgba(20,17,13,.56)}
     </div>
     <div class="setrow" style="margin-top:3px">
       <button class="opt" id="hardTopSw" data-on="0" style="min-width:56px">关闭</button>
-      <span class="tip2" id="hardTopTip">置顶最高：别的应用也开着置顶时（抖音、直播工具之类）依然压在最前。打开即自动置顶。</span>
+      <span class="tip2" id="hardTopTip">置顶最高：别的应用也开着置顶时（抖音、直播工具之类）依然压在最前。它不替你打开「置顶」开关。</span>
     </div>
     <div class="setrow" style="margin-top:3px">
       <button class="opt" id="drawerSwitch" data-on="1" style="min-width:56px">开启</button>
@@ -4554,9 +4554,18 @@ function setHardTop(on){
   paintHardTop();
   fetch("/set_top?hard=" + (on ? 1 : 0), {cache:"no-store"})
     .then(function(r){ return r.json(); }).then(function(d){
-      if(on && !d.on_top) toast("置顶没生效，可能是被系统拦了");
+      if(on && d.topmost === false) toast("置顶没生效，可能是被系统拦了");
     }).catch(function(){});
   toast(on ? "置顶最高：开启，谁都顶不下去" : "置顶最高：关闭");
+}
+/* 后端才是这个开关的真身：localStorage 清了、换端口了也不怕开着的显示成关 */
+function pullHardTop(){
+  fetch("/stat", {cache:"no-store"}).then(function(r){ return r.json(); })
+    .then(function(d){
+      if(!d) return;
+      try{ localStorage.setItem(HARD_KEY, d.top_hard ? "1" : "0"); }catch(e){}
+      paintHardTop();
+    }).catch(function(){});
 }
 if(el.hardTopSw) el.hardTopSw.addEventListener("click", function(){ setHardTop(!hardTopOn()); });
 
@@ -5221,6 +5230,7 @@ function openSet(){
   paintSet();
   paintDrawerSwitch();
   paintHardTop();
+  if(typeof pullHardTop === "function") pullHardTop();
   if(!drawerFeatureOn()){
     openDrawerRefresh();
     return;
