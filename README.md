@@ -25,7 +25,7 @@
 
 **装好的（推荐）**
 
-1. 到 [Releases](https://github.com/aishangniwwww/bonfire-player/releases/latest) 下载 `Bonfire-Setup-1.3.2.zip`（约 20 MB），**解压**出里面的 `Bonfire-安装程序.exe`；
+1. 到 [Releases](https://github.com/aishangniwwww/bonfire-player/releases/latest) 下载 `Bonfire-Setup-1.3.3.zip`（约 20 MB），**解压**出里面的 `Bonfire-安装程序.exe`；
 2. 双击 → 选目录（默认 `D:\Bonfire`）→ 可选桌面 / 开始菜单快捷方式 → 装完可直接启动；之后从桌面或开始菜单再开，不会重复解压；
 3. 卸载走「设置 → 应用」或目录里的 `卸载 Bonfire.exe`，右键菜单也能卸载。
 
@@ -260,6 +260,11 @@ QQ 音乐在本项目里已经不是「检索源」，而是**能出声的真音
 `GET /fallback?q=<歌名>` 就是这个兜底接口，返回 `{url, src, name}` 列表，页面在 QQ 拿不到地址时直接用它起播。
 
 另外修了一个会影响「点了没声」的老 bug：候选源补全时先把新源 push 进 `state.srcs` 再判断是否为空，结果永远不进 `loadSrc`。现在改成先判空再起播，兜底源也会先单独跑一次，不必等 meting / Deezer 全部返回。
+
+## 毛玻璃：底光 + 半透明机身
+这个 WebView 不能用 `backdrop-filter`（整屏加会让 fixed 浮层画不出来），所以毛玻璃只能是「底下有光 + 上面半透明」：
+- 开启毛玻璃 / 背景透明度时，`#glassAmb` 在壁纸层之前铺一层暖色散景光斑，半透明机身叠上去才有通透感；用户设了图片/视频壁纸时，壁纸会盖住这一层。
+- 机身、顶栏、检索框、收藏/导入列表、设置页共用一组 `--winA/--deckA/--panelA/--sheetA…` 变量，由进度条统一缩放浓度。
 
 ## 歌词同步：按版本对时长，跨版本等比缩放
 

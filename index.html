@@ -657,7 +657,21 @@ body[data-glass="1"] .cfmbox{background:rgba(6,5,4,.52)}
 body[data-glass="1"] .locPanel{background:rgba(20,17,13,.56)}
 
 /* ===== 毛玻璃铺满：主播放页 / 搜索页 / 收藏页 / 导入-下载列表 / 设置页；并接入背景透明度 ===== */
-body{--bgtr:1;--gbtnblur:12px;--winA:.70;--winB:.74;--winC:.78;--deckA:.34;--deckB:.14;--sheetA:.88;--panelA:.74;--tabA:.82;--listA:.32;--searchA:.62;--wrapA:.86}
+body{--bgtr:1;--gbtnblur:12px;--winA:.50;--winB:.56;--winC:.62;--deckA:.12;--deckB:.06;--sheetA:.88;--panelA:.74;--tabA:.82;--listA:.32;--searchA:.62;--wrapA:.86}
+/* 主播放页也要真有玻璃感：玻璃 / 透明开启时垫一层暖光底，半透明机身叠上去才看得出「透」
+   （这个 WebView 不能用 backdrop-filter，只能用「底下有光 + 上面半透明」做通透感；
+     底光放在壁纸层之前，用户设了图片/视频背景时会被壁纸盖住，不会打架） */
+#glassAmb{
+  position:fixed;inset:0;z-index:0;pointer-events:none;display:none;
+  background:
+    radial-gradient(circle 120px at 18% 14%, rgba(247,185,82,.30), rgba(247,185,82,0) 70%),
+    radial-gradient(circle 90px at 78% 20%, rgba(240,169,59,.22), rgba(240,169,59,0) 70%),
+    radial-gradient(circle 150px at 88% 78%, rgba(160,96,40,.26), rgba(160,96,40,0) 72%),
+    radial-gradient(circle 70px at 34% 88%, rgba(231,197,140,.14), rgba(231,197,140,0) 72%),
+    radial-gradient(circle 200px at 52% 46%, rgba(196,124,48,.13), rgba(196,124,48,0) 76%),
+    linear-gradient(160deg, rgba(26,20,9,.86) 0%, rgba(13,10,7,.72) 55%, rgba(9,8,6,.66) 100%);
+}
+body[data-glass="1"] #glassAmb,body[data-bgt="1"] #glassAmb{display:block}
 body[data-glass="1"] .win{background:linear-gradient(180deg,rgba(27,23,18,var(--winA)) 0%,rgba(21,17,9,var(--winB)) 60%,rgba(18,16,12,var(--winC)) 100%)}
 body[data-glass="1"] .deck{background:linear-gradient(180deg,rgba(0,0,0,var(--deckA)),rgba(0,0,0,var(--deckB)))}
 body[data-glass="1"] .search input{background:rgba(15,13,11,var(--searchA))}
@@ -811,6 +825,9 @@ body[data-gbtn="1"] .favSearch{border-color:rgba(255,255,255,calc(.24 * var(--gb
 </head>
 <body>
 
+<!-- 玻璃底光：只在毛玻璃 / 背景透明度开启时出现，垫在机身下面，让半透明机身真的「透」出来
+     （放在壁纸层之前，用户要是设了图片/视频背景，壁纸会盖住它，不会打架） -->
+<div id="glassAmb" aria-hidden="true"></div>
 <!-- 背景视频 / 音频层，永远垫在最底下 -->
 <div id="bgWrap" aria-hidden="true"><video id="bgv" loop muted playsinline preload="auto"></video><audio id="bga" loop preload="auto"></audio></div>
 <div class="win view-main" id="win">
@@ -5748,7 +5765,7 @@ function paintBgVars(){
   var tr = state.bgt ? Math.max(0.15, 1 - Math.max(5, Math.min(85, state.bgtPx || 40)) / 100) : 1;
   var frost = g ? Math.min(1.5, 0.55 + Math.max(2, Math.min(28, state.glassPx || 13)) / 26) : 1;
   var base = g
-    ? { winA:.70, winB:.74, winC:.78, deckA:.34, deckB:.14, sheetA:.88, panelA:.74,
+    ? { winA:.50, winB:.56, winC:.62, deckA:.12, deckB:.06, sheetA:.88, panelA:.74,
         tabA:.82, listA:.32, searchA:.62, wrapA:.86 }
     : { winA:1, winB:1, winC:1, deckA:.42, deckB:.18, sheetA:1, panelA:1,
         tabA:.96, listA:.26, searchA:1, wrapA:1 };
