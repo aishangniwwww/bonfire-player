@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Bonfire · 篝火（无边框原生小窗播放器）
 - 窗口：pywebview(WebView2) 无边框小窗，尺寸随页面内容自适应
 - 置顶：Win32 SetWindowPos，按钮 -> 本地端口 -> 窗口层级
@@ -27,7 +27,7 @@ import zipfile
 from ctypes import wintypes
 
 APP_TITLE = "Bonfire"
-APP_VER = "1.4.0"
+APP_VER = "1.4.1"
 UPDATE_API = "https://api.github.com/repos/aishangniwwww/bonfire-player/releases/latest"
 WIN_W = 300
 WIN_H = 312
@@ -535,6 +535,23 @@ def local_prune(rows=None):
     return keep
 
 
+def scan_audio_files(folder, max_depth=3):
+    """把一个目录里的音频捞出来（含子目录，最多三层；跳过隐藏目录）"""
+    rows = []
+    if not folder or not os.path.isdir(folder):
+        return rows
+    exts = tuple("." + e.lower().lstrip(".") for e in AUDIO_EXT)
+    base_depth = folder.rstrip("\\/").count(os.sep)
+    for root, dirs, files in os.walk(folder):
+        if root.count(os.sep) - base_depth >= max_depth:
+            dirs[:] = []
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for n in sorted(files):
+            if os.path.splitext(n)[1].lower() in exts:
+                rows.append(os.path.join(root, n))
+    return rows
+
+
 def pick_audio_folder():
     """选一个文件夹，把里面的音频全部收进来（批量导入用）"""
     try:
@@ -547,7 +564,7 @@ def pick_audio_folder():
             _fields_ = [("hwndOwner", wintypes.HWND), ("pidlRoot", ctypes.c_void_p),
                         ("pszDisplayName", wintypes.LPWSTR), ("lpszTitle", wintypes.LPCWSTR),
                         ("ulFlags", ctypes.c_uint), ("lpfn", ctypes.c_void_p),
-                        ("lParam", ctypes.LPARAM), ("iImage", ctypes.c_int)]
+                        ("lParam", wintypes.LPARAM), ("iImage", ctypes.c_int)]
 
         name = ctypes.create_unicode_buffer(512)
         bi = BROWSEINFO()
@@ -569,16 +586,7 @@ def pick_audio_folder():
         if not folder or not os.path.isdir(folder):
             return []
         LAST_FOLDER[0] = folder
-        rows = []
-        exts = tuple("." + e.lower().lstrip(".") for e in AUDIO_EXT)
-        base_depth = folder.rstrip("\\/").count(os.sep)
-        for root, dirs, files in os.walk(folder):
-            if root.count(os.sep) - base_depth >= 3:
-                dirs[:] = []
-            dirs[:] = [d for d in dirs if not d.startswith(".")]
-            for n in sorted(files):
-                if os.path.splitext(n)[1].lower() in exts:
-                    rows.append(os.path.join(root, n))
+        rows = scan_audio_files(folder, 3)
         log_api("pick folder %s -> %d files (deep)" % (folder, len(rows)))
         return rows
     except Exception as e:
@@ -992,9 +1000,6 @@ def watch_loop():
             tick += 1
             if tick == 1:
                 log_api("watch: first tick opt=%s ball=%s" % (WOPT, BALL["on"]))
-            # 全屏游戏在做主：窗口在它后面，贴边/裁圆都看不见，别每秒去算一遍
-            if GAME["on"] and WOPT.get("game_pause", True) and not BALL["on"]:
-                continue
             if BALL["on"]:
                 ball_snap(hwnd)
             else:
@@ -1027,8 +1032,7 @@ TOP = {"on": bool(_ST.get("on_top")), "hard": False}
 WOPT = {"ball_snap": bool(_ST.get("ball_snap", True)),
         "win_keep": bool(_ST.get("win_keep", True)),
         "ball_top": bool(_ST.get("ball_top", True)),
-        # 打游戏时抓屏会让帧数掉、鼠标发涩：默认自动让位（游戏在前台就暂停抓屏）
-        "game_pause": bool(_ST.get("game_pause", True))}
+}
 
 
 def set_opt(k, v):
@@ -1254,9 +1258,10 @@ def set_top_hard(on):
 
 
 def hard_top_loop():
-    """只在「用户正在用这个窗口」时才把窗口重新顶到最前。
-    切去别的窗口（哪怕那窗口自己也是置顶的，比如抖音、播放器）就撒手，
-    免得一直抢最上层、谁都压不下来。"""
+    """只有「正在用这个窗口」的时候才把它重新顶到最前。
+    切去别的窗口就停手（对方要也是置顶的，就让它赢），但**不清掉用户开的开关**——
+    以前这里是直接撒手 + 把标记抹成 False，结果用户开了「置顶最高」，
+    鼠标一点到别处开关自己就关了。现在只是这轮不顶，回到本窗口继续顶。"""
     while True:
         time.sleep(1.0)
         if not TOP.get("hard"):
@@ -1267,10 +1272,7 @@ def hard_top_loop():
                 continue
             fg = user32.GetForegroundWindow()
             if fg != hwnd:
-                # 前台已经换了别的窗口：不再抢，标记也一并撤掉
-                TOP["hard"] = False
-                log_api("hard top released (foreground moved away)")
-                continue
+                continue          # 前台是别人：这一秒不抢，开关保持
             user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
         except Exception:
@@ -1509,11 +1511,6 @@ def bg_stream(handler, fps=60, quality=62):
     last = None                      # 抓不到帧的时候拿上一帧顶上，页面就不会空一下（黑闪）
     while True:
         t0 = time.time()
-        # 全屏游戏 / 全屏视频在跑：这一帧先不抓（页面保留上一帧，不会黑），
-        # 把 CPU 让给游戏，帧数才不会被这块玻璃拖下来
-        if GAME["on"] and WOPT.get("game_pause", True):
-            time.sleep(min(0.35, max(0.12, step)))
-            continue
         try:
             data = bg_frame_jpeg(quality) or last
         except Exception:
@@ -1532,60 +1529,6 @@ def bg_stream(handler, fps=60, quality=62):
         time.sleep(max(0.0, step - dt))
     log_api("bg stream closed after %d frames" % n)
 
-
-GAME = {"on": False, "checked": 0.0}
-
-
-def win_is_descendant(hwnd, parent):
-    """前台窗口是不是本窗口的子窗口（WebView2 的子会拿到前台，别把它当别的 app）"""
-    try:
-        if not hwnd or not parent:
-            return False
-        cur = hwnd
-        for _ in range(8):
-            pid_owner = user32.GetWindow(cur, 4)   # GW_OWNER
-            cur = user32.GetParent(cur) or pid_owner
-            if cur == parent:
-                return True
-            if not cur:
-                return False
-    except Exception:
-        pass
-    return False
-
-
-def game_watch_loop():
-    """盯着前台窗口：整块屏幕都被一个别的窗口盖住（全屏游戏 / 全屏视频），
-    就把「游戏在前台」这个标记立起来，抓屏线程自己让位。每 2 秒看一眼，开销可以忽略。"""
-    sw, sh = [0], [0]
-    try:
-        sw[0] = user32.GetSystemMetrics(0)
-        sh[0] = user32.GetSystemMetrics(1)
-    except Exception:
-        pass
-    while True:
-        time.sleep(2.0)
-        try:
-            mine = find_hwnd()
-            fg = user32.GetForegroundWindow()
-            if not fg or fg == mine or win_is_descendant(fg, mine):
-                GAME["on"] = False
-                continue
-            cls = ctypes.create_unicode_buffer(256)
-            user32.GetClassNameW(fg, cls, 256)
-            rc = wintypes.RECT()
-            user32.GetWindowRect(fg, ctypes.byref(rc))
-            l_, t_, r_, b_ = rc.left, rc.top, rc.right, rc.bottom
-            pad = 2
-            # 必须是从 (0,0) 铺满整屏。普通窗口点最大化后矩形是 (-8,-8)→(屏+8,屏+8)，
-            # 只比大小会把「最大化」当成全屏，那样一开浏览器毛玻璃就停，所以四边都卡。
-            full = (-pad <= l_ <= pad and -pad <= t_ <= pad and
-                    abs((r_ - l_) - sw[0]) <= pad and abs((b_ - t_) - sh[0]) <= pad)
-            shell = cls.value in ("Progman", "WorkerW", "Shell_TrayWnd", "Windows.UI.Core.CoreWindow")
-            GAME["on"] = bool(full and not shell)
-            GAME["checked"] = time.time()
-        except Exception:
-            pass
 
 
 def polish_window(hwnd):
@@ -3957,8 +3900,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             data["on_top"] = 1 if TOP["on"] else 0      # 用户自己按的置顶
             data["topmost"] = 1 if is_topmost(hwnd) else 0   # 窗口实际是不是 topmost（置顶最高也会让它变 1）
             data["top_hard"] = 1 if TOP.get("hard") else 0
-            data["game_pause"] = 1 if WOPT.get("game_pause", True) else 0
-            data["game"] = 1 if GAME.get("on") else 0
             data["pending"] = len(PENDING)
             data["folded"] = HB.get("f")
             data["tray"] = 1 if TRAY["ok"] else 0
@@ -3998,7 +3939,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
 
         if path == "/opt":
-            for key in ("ball_snap", "win_keep", "ball_top", "game_pause"):
+            for key in ("ball_snap", "win_keep", "ball_top"):
                 if key in qs:
                     set_opt(key, (qs.get(key) or ["0"])[0] in ("1", "true", "on"))
             if "snap_now" in qs or "keep_now" in qs:
@@ -4007,8 +3948,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 keep_inside(find_hwnd())
             send_json(self, {"ok": True, "ball_snap": WOPT["ball_snap"],
                              "win_keep": WOPT["win_keep"],
-                             "ball_top": WOPT["ball_top"],
-                             "game_pause": WOPT["game_pause"]})
+                             "ball_top": WOPT["ball_top"]})
             return
 
         if path == "/autostart":
@@ -4493,7 +4433,6 @@ def main():
     threading.Thread(target=watch_loop, daemon=True).start()
     threading.Thread(target=bg_loop, daemon=True).start()
     threading.Thread(target=hard_top_loop, daemon=True).start()
-    threading.Thread(target=game_watch_loop, daemon=True).start()
     if MULTI["on"]:
         # 多开时各用各的 WebView2 数据目录，否则第二个实例会被同一个 profile 卡住
         webview.start(debug=False, private_mode=False,

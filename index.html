@@ -1405,12 +1405,6 @@ body[data-gbtn="1"] .favSearch{border-color:rgba(255,255,255,calc(.24 * var(--gb
     <div class="tip2" id="shotFpsTip">毛玻璃底下那层实时画面每秒抓多少帧（默认 120，机器吃得消可以往右拉；拉太高抓不过来会自动降，不会卡界面）。</div>
 
     <div class="setrow" style="margin-top:9px">
-      <button class="opt" id="gamePauseSwitch" data-on="1" style="min-width:96px">开启</button>
-      <span class="tip2" id="gamePauseTip">游戏在前台时停抓屏</span>
-    </div>
-    <div class="tip2" id="gamePauseNote">开着的话，全屏游戏（或全屏视频）一进前台，毛玻璃就停止抓屏、用最后一帧顶着，把 CPU 让给游戏；游戏一回桌面立刻恢复。平时不怎么打游戏也建议开着。</div>
-
-    <div class="setrow" style="margin-top:9px">
       <button class="opt" id="foldModeSwitch" data-on="0" style="min-width:96px">按歌曲平铺</button>
     </div>
     <div class="tip2" id="foldModeTip">开着就按歌曲平铺；点一下改成文件柜那张脸——导入的文件夹在列表里单独一行，点开才看到里面的歌。</div>
@@ -1627,7 +1621,6 @@ var el = {};
     "gbtnSwitch","gbtnTip","gbtnBox","gbtnRange","gbtnVal",
     "bgtSwitch","bgtTip","bgtBox","bgtRange","bgtVal",
     "shotFpsRange","shotFpsVal","shotFpsTip","shotFpsBox",
-    "gamePauseSwitch","gamePauseTip","gamePauseNote",
     "foldModeSwitch","foldModeTip","locCrumb",
     "favSearch","locSearch",
     "roundSwitch","roundTip","roundBox","roundRange","roundVal",
@@ -5331,7 +5324,7 @@ function setHardTop(on){
     .then(function(r){ return r.json(); }).then(function(d){
       if(on && d.topmost === false) toast("置顶没生效，可能是被系统拦了");
     }).catch(function(){});
-  toast(on ? "置顶最高：开启（切走别的窗口会自动让位）" : "置顶最高：关闭");
+  toast(on ? "置顶最高：开启（点到别的窗口时先让位，回来继续顶）" : "置顶最高：关闭");
 }
 /* 后端才是这个开关的真身：页面刷新后按它显示，别自己脑补一个「开着」 */
 function pullHardTop(){
@@ -6108,6 +6101,35 @@ function shotRestart(){
   if(_shotRetry) clearTimeout(_shotRetry);
   _shotRetry = setTimeout(function(){ _shotRetry = null; if(state.glass || state.bgt) shotStart(); }, 250);
 }
+/* 看门狗：MJPEG 被浏览器悄悄掐断时不一定会触发 onerror，<img> 就那么定在最后一帧上，
+   用户看到的就是「毛玻璃变成一张不动的图片」。所以每 1.5 秒把当前帧缩成 8x8 取个指纹，
+   连续 6 次一模一样就当作流已经死了，直接换一张图重新接流（桌面真静止时最多多换一次，看不出来）。 */
+var _wdTimer = null, _wdSig = "", _wdSame = 0, _wdCv = null;
+function shotSig(){
+  try{
+    var imgs = shotImgs(), cur = imgs[_shotIdx === 0 ? 0 : (_shotIdx < 0 ? -1 : _shotIdx)];
+    if(!cur){ cur = imgs.filter(function(x){ return x && x.naturalWidth > 0; })[0]; }
+    if(!cur || !cur.naturalWidth) return "";
+    if(!_wdCv){ _wdCv = document.createElement("canvas"); _wdCv.width = 8; _wdCv.height = 8; }
+    var c = _wdCv.getContext("2d");
+    c.drawImage(cur, 0, 0, 8, 8);
+    var d = c.getImageData(0, 0, 8, 8).data, s = [];
+    for(var i = 0; i < d.length; i += 4){ s.push(d[i] >> 4); }
+    return s.join(".");
+  }catch(e){ return ""; }
+}
+function shotWatchdog(){
+  if(!_shotLive){ _wdSig = ""; _wdSame = 0; return; }
+  var s = shotSig();
+  if(!s) return;
+  if(s === _wdSig){
+    _wdSame++;
+    if(_wdSame >= 6){ _wdSame = 0; _wdSig = ""; shotRestart(); }
+  }else{
+    _wdSig = s; _wdSame = 0;
+  }
+}
+if(!_wdTimer) _wdTimer = setInterval(shotWatchdog, 1500);
 function paintGlass(){
   var on = !!state.glass;
   var px = on ? Math.max(2, Math.min(28, state.glassPx || 13)) : 0;
@@ -6265,29 +6287,6 @@ function setShotFps(v, quiet){
 }
 if(el.shotFpsRange) el.shotFpsRange.addEventListener("input", function(){ setShotFps(el.shotFpsRange.value, true); });
 if(el.shotFpsTag) el.shotFpsTag.addEventListener("click", function(){ setShotFps(120); });
-/* 游戏时停抓屏：开着就够用了，文字写给不看设置的人也能懂 */
-var GAMEP_RAW = null;
-function paintGamePause(){
-  if(!el.gamePauseSwitch) return;
-  var on = GAMEP_RAW !== false;
-  el.gamePauseSwitch.dataset.on = on ? "1" : "0";
-  el.gamePauseSwitch.textContent = on ? "开启" : "关闭";
-  if(el.gamePauseTip) el.gamePauseTip.textContent = on ? "游戏在前台时停抓屏" : "游戏在前台也照样抓";
-}
-function setGamePause(on){
-  GAMEP_RAW = !!on;
-  paintGamePause();
-  fetch("/opt?game_pause=" + (on ? 1 : 0), {cache:"no-store"}).catch(function(){});
-  toast(on ? "游戏时省资源：开启" : "游戏时省资源：关闭");
-}
-function pullGamePause(){
-  fetch("/stat", {cache:"no-store"}).then(function(r){ return r.json(); })
-    .then(function(d){ if(d){ GAMEP_RAW = d.game_pause !== 0; paintGamePause(); } })
-    .catch(function(){});
-}
-if(el.gamePauseSwitch) el.gamePauseSwitch.addEventListener("click", function(){ setGamePause(GAMEP_RAW === false); });
-paintGamePause();
-pullGamePause();
 paintShotFps();
 if(el.setBack) el.setBack.addEventListener("click", function(){ backToList(); });
 
