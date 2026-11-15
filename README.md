@@ -155,6 +155,7 @@ python app.py
 - 每项都写着中文名，即使系统缺字体、原生名渲染成方框也能点对；缺字体的会标「需字体」
 
 **其他**
+- **检查更新**：设置 → 关于 显示当前版本，点「检查更新」问 GitHub 最新 Release；有新版本弹「发现新版本 x.x.x，要更新吗？」，点「是」自动下载安装包、静默装回原目录并重启——**收藏、导入的歌、封面、偏好设置都保留**（数据在 `%LOCALAPPDATA%\FilmMusicWindow`，升级只换 exe）
 - 倍速 0.75 / 1 / 1.25 / 1.5 / 2（无边框竖排小菜单）、单曲循环 / 顺序播放
 - 19 种文字界面（地球按钮在设置里）
 - 窗口内滚轮调音量、A/← 后退 5s、按住 D/→ 2 倍速、空格暂停（都在鼠标悬停于窗口内时生效）
@@ -230,6 +231,9 @@ build.ps1             打包脚本
 | `GET /cover/search?q=<歌名>` | 按歌名搜专辑封面（QQ 音乐元数据 + 300×300 专辑图） |
 | `GET /local/cover?id=&url=` | 把某张封面下载到本地并写回这首的 `cover` |
 | `GET /local/coverfile?id=` | 读回本地缓存封面 |
+| `GET /ver` | 当前版本号 |
+| `GET /update/check` | 问 GitHub 最新 Release，返回 `cur` / `latest` / `newer` / 安装包地址 |
+| `GET /update/run?url=` | 下载安装包、解出安装程序，2 秒后静默装回原目录并重启 |
 
 指令举例：`__search_list`、`__row_0`、`__play_now`、`__next_song`、`__set_dl_on`、`__dl_current`、
 `__open_lyr`、`__close_lyr`、`__lyr_dl`、`__lyr_next`、`__lyr_prev`、`__dl_dir_<路径>`、

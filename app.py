@@ -22,10 +22,13 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+import zipfile
 
 from ctypes import wintypes
 
 APP_TITLE = "Bonfire"
+APP_VER = "1.1.0"
+UPDATE_API = "https://api.github.com/repos/aishangniwwww/bonfire-player/releases/latest"
 WIN_W = 300
 WIN_H = 312
 
@@ -316,6 +319,124 @@ def pick_audio_files():
     except Exception as e:
         log_api("pick_audio_files EXC %r" % e)
         return []
+
+
+def ver_tuple(v):
+    """把 1.1.0 / v1.2 这类版本串变成可比较的三元组"""
+    nums = re.findall(r"\d+", str(v or ""))
+    nums = [int(x) for x in nums[:3]]
+    while len(nums) < 3:
+        nums.append(0)
+    return tuple(nums)
+
+
+def update_check():
+    """问 GitHub 要最新 Release，跟本机版本比一比"""
+    try:
+        req = urllib.request.Request(UPDATE_API, headers={
+            "User-Agent": "Bonfire/%s" % APP_VER,
+            "Accept": "application/vnd.github+json",
+        })
+        blob = urllib.request.urlopen(req, timeout=10).read()
+        d = json.loads(blob.decode("utf-8", "replace"))
+    except Exception as e:
+        log_api("update check fail %r" % e)
+        return {"ok": False, "why": "连不上 GitHub：%s" % e, "cur": APP_VER}
+    latest = str(d.get("tag_name") or "").lstrip("vV")
+    url, size = "", 0
+    assets = d.get("assets") or []
+    for a in assets:                                  # 优先拿安装包那份 zip
+        nm = str(a.get("name") or "")
+        if nm.lower().endswith(".zip") and "setup" in nm.lower():
+            url = a.get("browser_download_url") or ""
+            size = int(a.get("size") or 0)
+            break
+    if not url:
+        for a in assets:
+            if str(a.get("name") or "").lower().endswith(".zip"):
+                url = a.get("browser_download_url") or ""
+                size = int(a.get("size") or 0)
+                break
+    newer = bool(latest) and ver_tuple(latest) > ver_tuple(APP_VER)
+    return {"ok": True, "cur": APP_VER, "latest": latest or APP_VER, "newer": newer,
+            "url": url, "size": size, "notes": d.get("body") or "",
+            "page": d.get("html_url") or ""}
+
+
+def update_install_dir():
+    """当前程序装在哪个目录：升级就装回原地，别搬家"""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def update_run(url):
+    """下载新版安装包 → 解出安装程序 → 静默装回原目录并重启自己"""
+    if not url:
+        return {"ok": False, "why": "没有下载地址"}
+    if not re.match(r"^https://", url):
+        return {"ok": False, "why": "只认 https 地址"}
+    if not re.search(r"github\.com|githubusercontent\.com", url):
+        return {"ok": False, "why": "只从 GitHub 下载"}
+    up_dir = os.path.join(DATA_DIR, "update")
+    os.makedirs(up_dir, exist_ok=True)
+    zpath = os.path.join(up_dir, "Bonfire-Setup.zip")
+    # 国内直连 GitHub 下载常常先超时，多备两条镜像，谁快用谁
+    mirrors = [url, "https://ghfast.top/" + url, "https://gh-proxy.com/" + url]
+    last_err = ""
+    got = False
+    for u in mirrors:
+        try:
+            req = urllib.request.Request(u, headers={"User-Agent": "Bonfire/%s" % APP_VER})
+            with urllib.request.urlopen(req, timeout=45) as r:
+                with open(zpath, "wb") as f:
+                    while True:
+                        chunk = r.read(262144)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        if f.tell() > 64 * 1024 * 1024:
+                            raise RuntimeError("安装包大得不对劲")
+            if os.path.getsize(zpath) < 1024:
+                raise RuntimeError("下载到的文件太小")
+            got = True
+            log_api("update downloaded via %s" % u.split("/")[2])
+            break
+        except Exception as e:
+            last_err = str(e)
+            log_api("update download fail via %s: %r" % (u.split("/")[2], e))
+    if not got:
+        return {"ok": False, "why": "下载失败：%s" % last_err}
+    exe = os.path.join(up_dir, "Bonfire-Setup.exe")
+    try:
+        with zipfile.ZipFile(zpath) as z:
+            hit = [n for n in z.namelist() if n.lower().endswith(".exe")]
+            if not hit:
+                return {"ok": False, "why": "安装包里没有 exe"}
+            hit.sort(key=lambda n: 0 if "setup" in n.lower() or "安装" in n else 1)
+            with z.open(hit[0]) as src, open(exe, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+    except Exception as e:
+        log_api("update unzip fail %r" % e)
+        return {"ok": False, "why": "解压失败：%s" % e}
+    target = update_install_dir()
+
+    def later():
+        try:
+            log_api("update run -> %s (target=%s)" % (exe, target))
+            subprocess.Popen([exe, "--headless", target, "--no-desk", "--no-menu",
+                              "--launch", "--quiet"],
+                             creationflags=0x00000008 | 0x00000200)  # DETACHED_PROCESS | NEW_PROCESS_GROUP
+        except Exception as e:
+            log_api("update launch fail %r" % e)
+            return
+        time.sleep(0.4)
+        os._exit(0)      # 自己先关门，别让安装程序撞上文件占用
+
+    # 先把响应回给页面（页面要弹 toast），2 秒后再拉安装程序——
+    # 安装程序第一步就 taskkill Bonfire，抢在前面回包才是安全顺序
+    threading.Timer(2.0, later).start()
+    return {"ok": True, "exe": exe, "dir": target}
 
 
 def local_prune(rows=None):
@@ -3109,6 +3230,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             ok = set_clipboard(txt)
             log_api("copy -> %s (%s chars)" % (ok, len(txt)))
             send_json(self, {"ok": ok})
+            return
+
+        if path == "/ver":
+            send_json(self, {"ok": True, "ver": APP_VER})
+            return
+
+        if path == "/update/check":
+            send_json(self, update_check())
+            return
+
+        if path == "/update/run":
+            send_json(self, update_run((qs.get("url") or [""])[0].strip()))
             return
 
         if path == "/local/list":
