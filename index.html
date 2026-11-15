@@ -532,6 +532,29 @@ body[data-glass="3"] #setSheet{background:rgba(21,18,14,.58)}
 .favHead .grow{flex:1;min-width:0}
 .favHead .n{font-family:var(--mono);font-size:9px;color:#6E6152}
 .favList{flex:1;min-height:0;overflow:auto;padding:2px 0 6px}
+/* 导入列表左上角的路径条：跟资源管理器那行一样，「此电脑 › C: › 用户 › …」逐级可点 */
+.crumb{
+  display:none;flex-wrap:nowrap;align-items:center;gap:2px;
+  margin:3px 0 4px;padding:2px 0;overflow-x:auto;white-space:nowrap;
+  font-family:var(--mono);font-size:9px;color:#9A8B74;letter-spacing:.2px;
+  border-bottom:1px dotted rgba(233,222,197,.10);
+}
+.crumb.on{display:flex}
+.crumb::-webkit-scrollbar{height:0}
+.crumb .cp{
+  flex:0 0 auto;padding:1px 3px;border-radius:3px;cursor:pointer;
+  color:#C9B89E;background:none;border:0;font:inherit;
+}
+.crumb .cp:hover{background:rgba(240,169,59,.16);color:#F0C182}
+.crumb .cp.cur{color:#F2D9B0;font-weight:600}
+.crumb .cs{flex:0 0 auto;color:#5F5648;padding:0 1px}
+.crumb .cback{
+  flex:0 0 auto;margin-right:3px;padding:1px 4px;border-radius:3px;cursor:pointer;
+  border:1px solid rgba(240,169,59,.28);background:rgba(240,169,59,.10);color:#E7BE85;font:inherit;
+}
+/* 文件夹那一行的图标：一个细线条的文件柜 */
+.locPanel .row.fold .cov.fold{background:none;border:1px dashed rgba(240,169,59,.36);color:#E7BE85;font-size:12px}
+.locPanel .row.fold .du{color:#8A7C68}
 .favList::-webkit-scrollbar{width:5px}
 .favList::-webkit-scrollbar-thumb{background:rgba(233,222,197,.18);border-radius:3px}
 /* 导入歌曲列表：收藏页再往左滑出来的一层 */
@@ -1211,6 +1234,7 @@ body[data-gbtn="1"] .favSearch{border-color:rgba(255,255,255,calc(.24 * var(--gb
       <span class="n" id="locPanelCount"></span>
       <button class="dkbtn" id="locClose" title="返回收藏">×</button>
     </div>
+    <div class="crumb" id="locCrumb" aria-label="当前文件夹路径"></div>
     <div class="favList" id="locList"></div>
   </aside>
 
@@ -1373,12 +1397,23 @@ body[data-gbtn="1"] .favSearch{border-color:rgba(255,255,255,calc(.24 * var(--gb
 
     <div class="setrow" style="margin-top:9px">
       <button class="opt" id="shotFpsTag" style="min-width:96px" title="点一下回到 120 帧">画面帧率</button>
-      <div class="rangebox" id="shotFpsBox">
+      <div class="rangebox on" id="shotFpsBox">
         <input type="range" id="shotFpsRange" min="24" max="240" step="2" value="120">
         <span class="rval" id="shotFpsVal">120</span>
       </div>
     </div>
     <div class="tip2" id="shotFpsTip">毛玻璃底下那层实时画面每秒抓多少帧（默认 120，机器吃得消可以往右拉；拉太高抓不过来会自动降，不会卡界面）。</div>
+
+    <div class="setrow" style="margin-top:9px">
+      <button class="opt" id="gamePauseSwitch" data-on="1" style="min-width:96px">开启</button>
+      <span class="tip2" id="gamePauseTip">游戏在前台时停抓屏</span>
+    </div>
+    <div class="tip2" id="gamePauseNote">开着的话，全屏游戏（或全屏视频）一进前台，毛玻璃就停止抓屏、用最后一帧顶着，把 CPU 让给游戏；游戏一回桌面立刻恢复。平时不怎么打游戏也建议开着。</div>
+
+    <div class="setrow" style="margin-top:9px">
+      <button class="opt" id="foldModeSwitch" data-on="0" style="min-width:96px">按歌曲平铺</button>
+    </div>
+    <div class="tip2" id="foldModeTip">开着就按歌曲平铺；点一下改成文件柜那张脸——导入的文件夹在列表里单独一行，点开才看到里面的歌。</div>
 
     <div class="setrow" style="margin-top:9px">
       <button class="opt" id="roundSwitch" data-on="0" style="min-width:56px">关闭</button>
@@ -1573,7 +1608,7 @@ var state = {
   view: "main", mode: "order", lrcLines: [], lrcIdx: -1,
   fav: [], favOpen: false, ball: false, ballFeat: false, srcNote: "", dlOn: false, lySeek: false,
   glass: 1, glassPx: 13, round: 0, roundPx: 18, gbtn: 0, gbtnPx: 12, bgt: 0, bgtPx: 40,
-  favQ: "", locQ: ""
+  favQ: "", locQ: "", locDir: ""
 };
 
 var el = {};
@@ -1591,7 +1626,9 @@ var el = {};
     "glassSwitch","glassTip","glassBox","glassRange","glassVal",
     "gbtnSwitch","gbtnTip","gbtnBox","gbtnRange","gbtnVal",
     "bgtSwitch","bgtTip","bgtBox","bgtRange","bgtVal",
-    "shotFpsRange","shotFpsVal","shotFpsTip",
+    "shotFpsRange","shotFpsVal","shotFpsTip","shotFpsBox",
+    "gamePauseSwitch","gamePauseTip","gamePauseNote",
+    "foldModeSwitch","foldModeTip","locCrumb",
     "favSearch","locSearch",
     "roundSwitch","roundTip","roundBox","roundRange","roundVal",
  "favCount","favTitleTxt","ballLayer","ball","ballTxt","btnBall","ballSwitch","ballTip","ballLab","optLab","snapSwitch","snapTip","keepSwitch","keepTip","ballTopSwitch","ballTopTip","hardTopSw","hardTopTip",
@@ -3286,8 +3323,10 @@ function renderLocList(){
   var q = (state.locQ || "").trim().toLowerCase();
   if(!rows.length){
     el.locList.innerHTML = '<div class="empty-row">还没有导入歌曲，去设置里点「导入到软件」或「导入为链接」。</div>';
+    paintCrumb("");
     return;
   }
+  if(foldMode()){ renderLocFolderList(rows, q); return; }
   var h = "", hit = 0;
   rows.forEach(function(r, i){
     if(q && (r.name || "").toLowerCase().indexOf(q) < 0) return;
@@ -3300,8 +3339,130 @@ function renderLocList(){
       + '<span class="rstar on" data-ldel="' + i + '" role="button" aria-label="移除">×</span>'
       + '</div>';
   });
-  if(!hit) h = '<div class="empty-row">导入列表里没找到「' + esc(state.locQ) + '」，换个词试试。</div>';
+  if(!hit) h = '<div class="empty-row">导入列表里没找到「' + esc(state.locQ) + "」，换个词试试。</div>";
   el.locList.innerHTML = h;
+  paintCrumb("");
+}
+/* ===== 文件夹模式：导入的文件夹在列表里占一行，点开才看到里面的歌 ===== */
+var FOLD_KEY = "film.foldlist.v1";
+function foldMode(){
+  try{ return localStorage.getItem(FOLD_KEY) === "1"; }catch(e){ return false; }
+}
+function setFoldMode(v){
+  try{ localStorage.setItem(FOLD_KEY, v ? "1" : "0"); }catch(e){}
+  state.locDir = "";
+  paintFoldMode();
+  renderLocList();
+}
+function paintFoldMode(){
+  if(!el.foldModeSwitch) return;
+  var on = foldMode();
+  el.foldModeSwitch.dataset.on = on ? "1" : "0";
+  el.foldModeSwitch.textContent = on ? "按文件夹收起" : "按歌曲平铺";
+  el.foldModeSwitch.title = on ? "点一下改回按歌曲平铺" : "点一下改成按文件夹收起";
+}
+function dirBase(p){
+  p = String(p || "");
+  var i = Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/"));
+  return i >= 0 ? p.slice(i + 1) : p;
+}
+function dirParts(p){
+  var s = String(p || ""), out = ["此电脑"];
+  var m = s.match(/^([A-Za-z]:)/);
+  if(m) out.push(m[1]);
+  var rest = m ? s.slice(m[1].length) : s;
+  rest.split(/[\\\/]+/).forEach(function(x){ if(x) out.push(x); });
+  return out;
+}
+function paintCrumb(p){
+  if(!el.locCrumb) return;
+  if(!p){ el.locCrumb.className = "crumb"; el.locCrumb.innerHTML = ""; return; }
+  var s = String(p || "");
+  var m = s.match(/^([A-Za-z]:)/);
+  var nodes = [{ name: "此电脑", path: "" }];
+  if(m) nodes.push({ name: m[1], path: m[1] });
+  var rest = m ? s.slice(m[1].length) : s;
+  var acc = m ? m[1] : "";
+  rest.split(/[\\\/]+/).forEach(function(x){
+    if(!x) return;
+    acc = acc ? (acc + "\\" + x) : x;
+    nodes.push({ name: x, path: acc });
+  });
+  var h = '<button class="cback" data-crumb-back="1" title="回到导入列表">‹</button>';
+  nodes.forEach(function(n, i){
+    h += (i ? '<span class="cs">›</span>' : "")
+      + '<button class="cp' + (i === nodes.length - 1 ? " cur" : "") + '" data-crumb="'
+      + esc(n.path) + '">' + esc(n.name) + "</button>";
+  });
+  el.locCrumb.innerHTML = h;
+  el.locCrumb.className = "crumb on";
+  el.locCrumb.scrollLeft = el.locCrumb.scrollWidth;
+}
+function locDirGroup(path){
+  var rows = state.local || [], out = [];
+  rows.forEach(function(r, i){ if(r.dir === path) out.push(i); });
+  return out;
+}
+function renderLocFolderList(rows, q){
+  var cur = state.locDir || "";
+  if(!cur){
+    /* 第一层：文件夹一行一个，散装导入的歌照旧平铺在下面 */
+    var dirs = {}, loose = [];
+    rows.forEach(function(r, i){
+      if(r.dir) (dirs[r.dir] = dirs[r.dir] || []).push(i); else loose.push(i);
+    });
+    var h = "", hit = 0;
+    Object.keys(dirs).forEach(function(d){
+      var name = dirBase(d) || d;
+      var cnt = dirs[d].length;
+      if(q && (name + " " + d).toLowerCase().indexOf(q) < 0) return;
+      hit++;
+      h += '<div class="row fold" data-dir="' + esc(d) + '">'
+        + '<span class="cov fold">▤</span>'
+        + '<div class="txt"><div class="nm">' + esc(name) + '</div>'
+        + '<div class="ar">' + cnt + " 首 · 点开看里面的歌</div></div>"
+        + '<span class="du">›</span>'
+        + '<span class="rstar on" data-dirrm="' + esc(d) + '" role="button" aria-label="移除整个文件夹">×</span>'
+        + '</div>';
+    });
+    loose.forEach(function(i){
+      var r = rows[i];
+      if(q && (r.name || "").toLowerCase().indexOf(q) < 0) return;
+      hit++;
+      h += '<div class="row" data-l="' + i + '">'
+        + '<span class="cov">' + (r.cover ? '<img src="' + esc(r.cover) + '" alt="">' : "♪") + '</span>'
+        + '<div class="txt"><div class="nm">' + esc(r.name || "未命名") + '</div>'
+        + '<div class="ar">' + (r.mode === "copy" ? "已复制进软件" : "链接原文件") + '</div></div>'
+        + '<span class="du">' + fmtSize(r.size) + '</span>'
+        + '<span class="rstar on" data-ldel="' + i + '" role="button" aria-label="移除">×</span>'
+        + '</div>';
+    });
+    if(!hit) h = '<div class="empty-row">' + (q ? ("没找到「" + esc(state.locQ) + "」") : "还没有导入文件夹，去设置里点「导入文件夹」。") + '</div>';
+    el.locList.innerHTML = h;
+    paintCrumb("");
+    return;
+  }
+  var idx = locDirGroup(cur), hit = 0, h = "";
+  idx.forEach(function(i){
+    var r = rows[i];
+    if(q && (r.name || "").toLowerCase().indexOf(q) < 0) return;
+    hit++;
+    var sub = "";
+    try{
+      var rel = String(r.path || "").slice(cur.length).replace(/^[\\\/]+/, "");
+      sub = rel.indexOf("\\") >= 0 ? rel.slice(0, rel.lastIndexOf("\\")) : "";
+    }catch(e){}
+    h += '<div class="row" data-l="' + i + '">'
+      + '<span class="cov">' + (r.cover ? '<img src="' + esc(r.cover) + '" alt="">' : "♪") + '</span>'
+      + '<div class="txt"><div class="nm">' + esc(r.name || "未命名") + '</div>'
+      + '<div class="ar">' + (sub ? esc(sub) : "在这个文件夹里") + '</div></div>'
+      + '<span class="du">' + fmtSize(r.size) + '</span>'
+      + '<span class="rstar on" data-ldel="' + i + '" role="button" aria-label="移除">×</span>'
+      + '</div>';
+  });
+  if(!hit) h = '<div class="empty-row">' + (q ? ("这个文件夹里没找到「" + esc(state.locQ) + "」") : "这个文件夹里没有歌了。") + '</div>';
+  el.locList.innerHTML = h;
+  paintCrumb(cur);
 }
 /* 收藏 / 导入面板的搜索框：输入即筛，标题旁边就贴着 */
 if(el.favSearch){
@@ -3449,7 +3610,9 @@ function importLocal(mode, folder){
   if(!shellOn){ toast("只有桌面版能导入本地歌曲"); return; }
   var btn = folder ? el.locFolder : (mode === "link" ? el.locLink : el.locCopy);
   if(btn) btn.disabled = true;
-  var q = "/local/import?mode=" + (mode === "link" ? "link" : "copy") + (folder ? "&folder=1" : "");
+  var q = "/local/import?mode=" + (mode === "link" ? "link" : "copy")
+        + (folder ? "&folder=1" : "")
+        + (folder && foldMode() ? "&asfolder=1" : "");
   fetch(q, {cache:"no-store"})
     .then(function(r){ return r.json(); })
     .then(function(d){
@@ -3459,6 +3622,7 @@ function importLocal(mode, folder){
         return;
       }
       state.local = d.rows || [];
+      if(folder && d.dir && foldMode()) state.locDir = d.dir;
       paintLocCount(); renderLocList();
       var added = d.added || [];
       var dup = d.dup || [];
@@ -3536,6 +3700,35 @@ if(el.locClear){
 if(el.locClose) el.locClose.addEventListener("click", closeLoc);
 if(el.locList){
   el.locList.addEventListener("click", function(e){
+    /* 文件夹整组移除 */
+    var dr = e.target.closest ? e.target.closest("[data-dirrm]") : null;
+    if(dr){
+      e.stopPropagation();
+      var d = dr.getAttribute("data-dirrm");
+      var killed = [];
+      state.local.forEach(function(r){ if(r.dir === d) killed.push(r); });
+      if(!killed.length) return;
+      if(!confirm("把这个文件夹下面的 " + killed.length + " 首一起移出导入列表？")) return;
+      killed.forEach(function(r){ fetch("/local/del?id=" + r.id, {cache:"no-store"}).catch(function(){}); });
+      state.local = state.local.filter(function(r){ return r.dir !== d; });
+      state.fav = state.fav.filter(function(f){
+        for(var i=0;i<killed.length;i++){ if(String(f.k) === ("local#" + killed[i].id)) return false; }
+        return true;
+      });
+      if(state.locDir === d) state.locDir = "";
+      saveFav(); paintFavBtn(); paintLocCount(); renderFavList(); renderLocList();
+      toast("已移出 " + killed.length + " 首");
+      return;
+    }
+    /* 点文件夹：进去看里面的歌 */
+    var fd = e.target.closest ? e.target.closest("[data-dir]") : null;
+    if(fd){
+      state.locDir = fd.getAttribute("data-dir");
+      if(el.locSearch) el.locSearch.value = "";
+      state.locQ = "";
+      renderLocList();
+      return;
+    }
     var d = e.target.closest ? e.target.closest("[data-ldel]") : null;
     if(d){
       e.stopPropagation();
@@ -3592,6 +3785,46 @@ if(el.locTitleTxt){
   });
 }
 if(el.locPanel){ el.locPanel.addEventListener("click", function(e){ if(e.target === el.locPanel) closeLoc(); }); }
+/* 路径条：点某一级就跳回那一级（跟资源管理器一样逐级可点） */
+if(el.locCrumb){
+  el.locCrumb.addEventListener("click", function(e){
+    var t = e.target.closest ? e.target : null;
+    if(!t) return;
+    var back = t.closest("[data-crumb-back]");
+    if(back){
+      state.locDir = "";
+      state.locQ = ""; if(el.locSearch) el.locSearch.value = "";
+      renderLocList();
+      return;
+    }
+    var c = t.closest("[data-crumb]");
+    if(!c) return;
+    var p = c.getAttribute("data-crumb") || "";
+    if(!p){
+      state.locDir = "";
+      renderLocList();
+      return;
+    }
+    var best = "";
+    (state.local || []).forEach(function(r){
+      var d = r.dir || "";
+      if(!d) return;
+      if(d.toLowerCase().indexOf(p.toLowerCase()) === 0 && d.length > best.length) best = d;
+    });
+    if(best){
+      state.locDir = best;
+      state.locQ = ""; if(el.locSearch) el.locSearch.value = "";
+      renderLocList();
+    }else{
+      state.locDir = "";
+      renderLocList();
+    }
+  });
+}
+if(el.foldModeSwitch){
+  el.foldModeSwitch.addEventListener("click", function(){ setFoldMode(!foldMode()); });
+}
+paintFoldMode();
 
 loadLyrFollow();
 loadLyrOff();
@@ -3601,9 +3834,10 @@ if(el.lyrOffZero) el.lyrOffZero.addEventListener("click", function(){ setLyrOff(
 localFetch();
 setTimeout(function(){
   if(typeof pullAutoBoot === "function") pullAutoBoot();
-  if(typeof hardTopOn === "function" && hardTopOn()){
-    fetch("/set_top?hard=1", {cache:"no-store"}).catch(function(){});
-  }
+  /* 「置顶最高」不再开机自动打开：以前这里按 localStorage 里存的 1 自动往最前挤，
+     结果连别的置顶窗口（抖音、视频播放器）都压不下去。现在只认手动点开关。 */
+  try{ localStorage.removeItem("bf_top_hard"); }catch(e){}
+  if(typeof paintHardTop === "function") paintHardTop();
 }, 0);
 
 /* ================= 右滑返回上一级（主播放页不参与） ================= */
@@ -5081,9 +5315,8 @@ if(el.cfmBox) el.cfmBox.addEventListener("click", function(e){
   if(e.target === el.cfmBox) closeCfm();
 });
 var HARD_KEY = "bf_top_hard";
-function hardTopOn(){
-  try{ return localStorage.getItem(HARD_KEY) === "1"; }catch(e){ return false; }
-}
+var HARD_ON = false;   // 只在本次运行有效，不写盘、不跨启动
+function hardTopOn(){ return HARD_ON; }
 function paintHardTop(){
   if(!el.hardTopSw) return;
   var on = hardTopOn();
@@ -5092,20 +5325,20 @@ function paintHardTop(){
   el.hardTopSw.setAttribute("data-on", on ? "1" : "0");
 }
 function setHardTop(on){
-  try{ localStorage.setItem(HARD_KEY, on ? "1" : "0"); }catch(e){}
+  HARD_ON = !!on;
   paintHardTop();
   fetch("/set_top?hard=" + (on ? 1 : 0), {cache:"no-store"})
     .then(function(r){ return r.json(); }).then(function(d){
       if(on && d.topmost === false) toast("置顶没生效，可能是被系统拦了");
     }).catch(function(){});
-  toast(on ? "置顶最高：开启，谁都顶不下去" : "置顶最高：关闭");
+  toast(on ? "置顶最高：开启（切走别的窗口会自动让位）" : "置顶最高：关闭");
 }
-/* 后端才是这个开关的真身：localStorage 清了、换端口了也不怕开着的显示成关 */
+/* 后端才是这个开关的真身：页面刷新后按它显示，别自己脑补一个「开着」 */
 function pullHardTop(){
   fetch("/stat", {cache:"no-store"}).then(function(r){ return r.json(); })
     .then(function(d){
       if(!d) return;
-      try{ localStorage.setItem(HARD_KEY, d.top_hard ? "1" : "0"); }catch(e){}
+      HARD_ON = !!d.top_hard;
       paintHardTop();
     }).catch(function(){});
 }
@@ -6032,6 +6265,29 @@ function setShotFps(v, quiet){
 }
 if(el.shotFpsRange) el.shotFpsRange.addEventListener("input", function(){ setShotFps(el.shotFpsRange.value, true); });
 if(el.shotFpsTag) el.shotFpsTag.addEventListener("click", function(){ setShotFps(120); });
+/* 游戏时停抓屏：开着就够用了，文字写给不看设置的人也能懂 */
+var GAMEP_RAW = null;
+function paintGamePause(){
+  if(!el.gamePauseSwitch) return;
+  var on = GAMEP_RAW !== false;
+  el.gamePauseSwitch.dataset.on = on ? "1" : "0";
+  el.gamePauseSwitch.textContent = on ? "开启" : "关闭";
+  if(el.gamePauseTip) el.gamePauseTip.textContent = on ? "游戏在前台时停抓屏" : "游戏在前台也照样抓";
+}
+function setGamePause(on){
+  GAMEP_RAW = !!on;
+  paintGamePause();
+  fetch("/opt?game_pause=" + (on ? 1 : 0), {cache:"no-store"}).catch(function(){});
+  toast(on ? "游戏时省资源：开启" : "游戏时省资源：关闭");
+}
+function pullGamePause(){
+  fetch("/stat", {cache:"no-store"}).then(function(r){ return r.json(); })
+    .then(function(d){ if(d){ GAMEP_RAW = d.game_pause !== 0; paintGamePause(); } })
+    .catch(function(){});
+}
+if(el.gamePauseSwitch) el.gamePauseSwitch.addEventListener("click", function(){ setGamePause(GAMEP_RAW === false); });
+paintGamePause();
+pullGamePause();
 paintShotFps();
 if(el.setBack) el.setBack.addEventListener("click", function(){ backToList(); });
 
