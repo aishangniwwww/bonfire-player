@@ -27,7 +27,7 @@ import zipfile
 from ctypes import wintypes
 
 APP_TITLE = "Bonfire"
-APP_VER = "1.1.3"
+APP_VER = "1.2.0"
 UPDATE_API = "https://api.github.com/repos/aishangniwwww/bonfire-player/releases/latest"
 WIN_W = 300
 WIN_H = 312
@@ -455,11 +455,58 @@ def local_prune(rows=None):
     return keep
 
 
-def local_import(mode="copy"):
+def pick_audio_folder():
+    """选一个文件夹，把里面的音频全部收进来（批量导入用）"""
+    try:
+        shell32 = ctypes.windll.shell32
+        ole32 = ctypes.windll.ole32
+        BIF_RETURNONLYFSDIRS = 0x0001
+        BIF_NEWDIALOGSTYLE = 0x0040
+
+        class BROWSEINFO(ctypes.Structure):
+            _fields_ = [("hwndOwner", wintypes.HWND), ("pidlRoot", ctypes.c_void_p),
+                        ("pszDisplayName", wintypes.LPWSTR), ("lpszTitle", wintypes.LPCWSTR),
+                        ("ulFlags", ctypes.c_uint), ("lpfn", ctypes.c_void_p),
+                        ("lParam", ctypes.LPARAM), ("iImage", ctypes.c_int)]
+
+        name = ctypes.create_unicode_buffer(512)
+        bi = BROWSEINFO()
+        bi.hwndOwner = find_hwnd()
+        bi.pszDisplayName = ctypes.cast(name, wintypes.LPWSTR)
+        bi.lpszTitle = "选择放歌的文件夹"
+        bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE
+        try:
+            ole32.CoInitialize(None)
+        except Exception:
+            pass
+        pidl = shell32.SHBrowseForFolderW(ctypes.byref(bi))
+        if not pidl:
+            return []
+        path_buf = ctypes.create_unicode_buffer(1024)
+        shell32.SHGetPathFromIDListW(ctypes.c_void_p(pidl), path_buf)
+        ole32.CoTaskMemFree(ctypes.c_void_p(pidl))
+        folder = path_buf.value
+        if not folder or not os.path.isdir(folder):
+            return []
+        rows = []
+        exts = tuple("." + e.lower().lstrip(".") for e in AUDIO_EXT)
+        for n in sorted(os.listdir(folder)):
+            full = os.path.join(folder, n)
+            if os.path.isfile(full) and os.path.splitext(n)[1].lower() in exts:
+                rows.append(full)
+        log_api("pick folder %s -> %d files" % (folder, len(rows)))
+        return rows
+    except Exception as e:
+        log_api("pick_audio_folder EXC %r" % e)
+        return []
+
+
+def local_import(mode="copy", paths=None):
     """导入选中的音频：copy=复制进软件目录，link=只记原路径
+    paths 可以直接给（文件夹批量导入 / 测试用），不给就弹多选框。
     已经导入过、而且文件确实还在的才算重复；列表里那条记录文件早就丢了的，
     当作没导入过，直接把老记录修好重新加回来（以前会被判成「已导入」）"""
-    got = pick_audio_files()
+    got = paths if paths is not None else pick_audio_files()
     if not got:
         return {"ok": False, "why": "未选择文件", "rows": local_load(), "added": 0}
     rows = local_prune()
@@ -3267,8 +3314,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
 
         if path == "/local/import":
-            mode = (qs.get("mode") or ["copy"])[0]
-            send_json(self, local_import("link" if mode == "link" else "copy"))
+            mode = "link" if (qs.get("mode") or ["copy"])[0] == "link" else "copy"
+            folder = (qs.get("folder") or ["0"])[0] == "1"
+            send_json(self, local_import(mode, pick_audio_folder() if folder else None))
             return
 
         if path == "/cover/search":

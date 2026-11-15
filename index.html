@@ -1074,7 +1074,8 @@ body[data-glass="1"] .locPanel{background:rgba(20,17,13,.56)}
     </div>
     <div class="covBody" id="covBody"></div>
     <div class="covFoot">
-      <button class="opt" id="covSkip">这首不要封面</button>
+      <button class="opt" id="covSkip">这首跳过</button>
+      <button class="opt" id="covAllSkip">全部跳过</button>
     </div>
   </aside>
 
@@ -1227,10 +1228,13 @@ body[data-glass="1"] .locPanel{background:rgba(20,17,13,.56)}
 
     <div class="setlab" id="locLab">本地歌曲</div>
     <div class="setrow">
-      <button class="opt" id="locCopy" style="min-width:88px">导入到软件</button>
-      <button class="opt" id="locLink" style="min-width:88px">导入为链接</button>
+      <button class="opt" id="locCopy" style="min-width:118px">导入到软件（可多选）</button>
+      <button class="opt" id="locFolder" style="min-width:88px">导入文件夹</button>
     </div>
-    <div class="tip2" id="locTip">导入到软件＝复制进本机 Bonfire 目录，删原文件也不影响；导入为链接＝只记原路径，每次直接访问原音频。导入后自动收藏。</div>
+    <div class="setrow" style="margin-top:3px">
+      <button class="opt" id="locLink" style="min-width:118px">导入为链接（可多选）</button>
+    </div>
+    <div class="tip2" id="locTip">导入到软件＝复制进本机 Bonfire 目录，删原文件也不影响；导入为链接＝只记原路径。对话框里按住 Ctrl / Shift 可以一次勾好几首，也可以整个文件夹一起收；导入后自动收藏，开着配封面就按导入顺序一首首配。</div>
     <div class="setrow" style="margin-top:3px">
       <button class="opt" id="locClear" style="min-width:66px">清空列表</button>
       <span class="tip2" id="locCount">还没有导入歌曲</span>
@@ -1423,9 +1427,9 @@ var el = {};
     "devSel","devStat","btnDevRead","btnDevRestore","btnElev","optMsiSeg","optDevPrioSeg","optDevAffSeg",
     "accStat","optAccSeg","gameStat","btnGameScan","btnGameClean","rtssStat","rtssFps","btnRtss",
     "btnRtssOff","btnRtssGet","lyrLab","lyrSwitch","lyrTip","lyrOffBack","lyrOffZero","lyrOffFwd","lyrOffVal","lyrOffTip","locLab","locCopy","locLink","locTip","locClear",
- "locCount","locPanel","locClose","locList","locPanelCount","locTitleTxt",
+ "locCount","locPanel","locClose","locList","locPanelCount","locTitleTxt","locFolder",
  "covSwitch","covTip",
- "covPanel","covBody","covClose","covSkip","covCount","covTitleTxt",
+ "covPanel","covBody","covClose","covSkip","covAllSkip","covCount","covTitleTxt",
  "drawerSwitch","drawerTip","autoBootSw","autoBootTip"].forEach(function(k){ el[k] = document.getElementById(k); });
 
 window.__err = "";
@@ -3083,30 +3087,37 @@ function setCovOn(on){
   try{ localStorage.setItem(COV_KEY, on ? "1" : "0"); }catch(e){}
   paintCovSw();
 }
-var covQueue = [], covPos = 0, covBusy = false;
+var covQueue = [], covPos = 0, covBusy = false, covDone = 0;
 function closeCov(){
   if(el.covPanel){
     el.covPanel.classList.remove("show");
     el.covPanel.setAttribute("aria-hidden", "true");
   }
-  covQueue = []; covPos = 0;
+  covQueue = []; covPos = 0; covDone = 0;
 }
 function openCov(list){
   if(!el.covPanel || !list || !list.length) return;
-  covQueue = list.slice(); covPos = 0;
+  covQueue = list.slice(); covPos = 0; covDone = 0;
   el.covPanel.classList.add("show");
   el.covPanel.setAttribute("aria-hidden", "false");
   renderCov();
 }
 function renderCov(){
   if(!el.covBody) return;
-  if(covPos >= covQueue.length){ closeCov(); toast("封面配好了"); return; }
+  if(covPos >= covQueue.length){
+    var n = covQueue.length, done = covDone;
+    closeCov();
+    toast(done ? ("这 " + n + " 首配完 " + done + " 张封面") : "这几首就不配封面了");
+    return;
+  }
   var r = covQueue[covPos];
   if(el.covCount) el.covCount.textContent = (covPos + 1) + "/" + covQueue.length;
-  if(el.covTitleTxt) el.covTitleTxt.textContent = "配封面";
+  if(el.covTitleTxt) el.covTitleTxt.textContent = covQueue.length > 1 ? "批量配封面" : "配封面";
+  var rest = covQueue.length - covPos - 1;
   el.covBody.innerHTML = '<div class="covSong"><i>' +
       (r.cover ? '<img src="' + esc(r.cover) + '" alt="">' : "") + '</i><div><b>' + esc(r.name) +
-      '</b><span>找一张同名专辑封面贴上去</span></div></div>' +
+      '</b><span>第 ' + (covPos + 1) + ' 首' + (rest > 0 ? ('，后面还有 ' + rest + ' 首等着') : '，最后一首') +
+      ' · 找一张同名专辑封面贴上去</span></div></div>' +
       '<div class="covFind"><input id="covQ" type="search" placeholder="搜歌名" value="' +
       esc(covQueryOf(r)) + '" autocomplete="off"><button class="opt" id="covGo">搜</button></div>' +
       '<div class="covEmpty" id="covHint">在搜封面…</div><div class="covGrid" id="covGrid"></div>';
@@ -3128,13 +3139,14 @@ function covFill(q){
   q = String(q || "").trim();
   var grid = document.getElementById("covGrid"), hint = document.getElementById("covHint");
   if(!grid) return;
+  var at = covPos;                 /* 批量配的时候，前一首的搜索结果不能画到这一首上 */
   grid.innerHTML = "";
   if(!q){ if(hint) hint.textContent = "先写个歌名再搜。"; return; }
   if(hint) hint.textContent = "在搜《" + q + "》…";
   fetch("/cover/search?q=" + encodeURIComponent(q), {cache: "no-store"})
     .then(function(x){ return x.json(); })
     .then(function(d){
-      if(covPos >= covQueue.length) return;
+      if(at !== covPos || covPos >= covQueue.length) return;
       var g = document.getElementById("covGrid"), h = document.getElementById("covHint");
       if(!g) return;
       var rows = (d && d.rows) || [];
@@ -3175,16 +3187,18 @@ function applyCov(r, it){
         if(state.fav[j].k === ("local#" + r.id)) state.fav[j].cover = d.cover;
       }
       saveFav(); renderLocList(); renderFavList();
-      toast("《" + r.name + "》封面已换");
+      covDone += 1;
+      toast("《" + r.name + "》封面已换" + (covQueue.length > 1 ? ("（" + (covPos + 1) + "/" + covQueue.length + "）") : ""));
       covPos += 1; renderCov();
     })
     .catch(function(){ covBusy = false; toast("封面没换成，网络或平台拦了"); });
 }
-function importLocal(mode){
+function importLocal(mode, folder){
   if(!shellOn){ toast("只有桌面版能导入本地歌曲"); return; }
-  var btn = mode === "link" ? el.locLink : el.locCopy;
+  var btn = folder ? el.locFolder : (mode === "link" ? el.locLink : el.locCopy);
   if(btn) btn.disabled = true;
-  fetch("/local/import?mode=" + (mode === "link" ? "link" : "copy"), {cache:"no-store"})
+  var q = "/local/import?mode=" + (mode === "link" ? "link" : "copy") + (folder ? "&folder=1" : "");
+  fetch(q, {cache:"no-store"})
     .then(function(r){ return r.json(); })
     .then(function(d){
       if(btn) btn.disabled = false;
@@ -3208,7 +3222,7 @@ function importLocal(mode){
       }
       /* 三种结果分开说清楚，别把「没导进去」说成「导入过了」 */
       var msg = [];
-      if(added.length) msg.push("导入 " + added.length + " 首，已自动收藏");
+      if(added.length) msg.push((added.length > 1 ? "批量导入 " : "导入 ") + added.length + " 首，已自动收藏");
       if(dup.length) msg.push(dup.length + " 首本来就在列表里");
       if(failed.length) msg.push(failed.length + " 首没导进来（" + (failed[0].why || "文件有问题") + "）");
       toast(msg.length ? msg.join(" · ") : "这次没选中能导入的文件");
@@ -3230,6 +3244,7 @@ function closeLoc(){
   el.locPanel.setAttribute("aria-hidden", "true");
 }
 if(el.locCopy) el.locCopy.addEventListener("click", function(){ importLocal("copy"); });
+if(el.locFolder) el.locFolder.addEventListener("click", function(){ importLocal("copy", true); });
 if(el.locLink) el.locLink.addEventListener("click", function(){ importLocal("link"); });
 /* 配封面开关 + 面板收尾 */
 function paintCovSw(){
@@ -3248,7 +3263,10 @@ if(el.covClose) el.covClose.addEventListener("click", function(){ closeCov(); })
 if(el.covSkip) el.covSkip.addEventListener("click", function(){
   if(!covQueue.length){ closeCov(); return; }
   covPos += 1;
-  if(covPos >= covQueue.length){ closeCov(); toast("这几首就不配封面了"); return; }
+  renderCov();
+});
+if(el.covAllSkip) el.covAllSkip.addEventListener("click", function(){
+  covPos = covQueue.length;
   renderCov();
 });
 paintCovSw();
