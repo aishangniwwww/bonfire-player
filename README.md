@@ -25,7 +25,7 @@
 
 **装好的（推荐）**
 
-1. 到 [Releases](https://github.com/aishangniwwww/bonfire-player/releases/latest) 下载 `Bonfire-Setup-1.1.2.zip`（19.3 MB），**解压**出里面的 `Bonfire-安装程序.exe`；
+1. 到 [Releases](https://github.com/aishangniwwww/bonfire-player/releases/latest) 下载 `Bonfire-Setup-1.1.3.zip`（19.3 MB），**解压**出里面的 `Bonfire-安装程序.exe`；
 2. 双击 → 选目录（默认 `D:\Bonfire`）→ 可选桌面 / 开始菜单快捷方式 → 装完可直接启动；之后从桌面或开始菜单再开，不会重复解压；
 3. 卸载走「设置 → 应用」或目录里的 `卸载 Bonfire.exe`，右键菜单也能卸载。
 

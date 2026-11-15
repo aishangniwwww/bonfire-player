@@ -27,7 +27,7 @@ import zipfile
 from ctypes import wintypes
 
 APP_TITLE = "Bonfire"
-APP_VER = "1.1.2"
+APP_VER = "1.1.3"
 UPDATE_API = "https://api.github.com/repos/aishangniwwww/bonfire-player/releases/latest"
 WIN_W = 300
 WIN_H = 312
@@ -800,8 +800,20 @@ def wake_existing(port):
         pass
 
 
+def _ping_ports_wait(secs=8.0):
+    """刚双击时另一个实例可能还在起，给它几秒钟；一直没端口就说明是僵尸进程"""
+    end = time.time() + secs
+    while True:
+        p = _ping_ports()
+        if p or time.time() >= end:
+            return p
+        time.sleep(0.6)
+
+
 def claim_single():
-    """单开模式：已经有一个在跑，就把它的窗口叫出来，本进程直接退出"""
+    """单开模式：已经有一个在跑，就把它的窗口叫出来，本进程直接退出。
+    但「锁还在、端口没了」= 上次那个进程卡死成僵尸了，这时必须自己起，
+    否则双击永远叫不醒，用户看到的就是「启动不了」。"""
     if MULTI["on"]:
         return True
     k = ctypes.windll.kernel32
@@ -810,11 +822,13 @@ def claim_single():
     if not h:
         return True
     if k.GetLastError() == 183:          # ERROR_ALREADY_EXISTS
-        p = _ping_ports()
+        p = _ping_ports_wait(8.0)
         if p:
             wake_existing(p)
-        return False
-    p = _ping_ports()                    # 兜底：老进程用的是别的锁（比如旧名字）
+            return False
+        log_api("single: mutex held but no port -> stale instance, starting fresh")
+        return True
+    p = _ping_ports_wait(3.0)            # 兜底：老进程用的是别的锁（比如旧名字）
     if p:
         wake_existing(p)
         return False
