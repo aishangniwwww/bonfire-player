@@ -726,6 +726,47 @@ body[data-gbtn="1"] .play{
 }
 body[data-gbtn="1"] .play:hover{background:rgba(247,185,82,.5)}
 body[data-gbtn="1"] .icobtn.pinned{background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.5)}
+/* 毛玻璃化按钮开启时，所有按钮边角一律圆润（胶囊/正圆，不再出现方角） */
+body[data-gbtn="1"] button,body[data-gbtn="1"] .opt,body[data-gbtn="1"] .dkbtn,
+body[data-gbtn="1"] .icobtn,body[data-gbtn="1"] .sbt,body[data-gbtn="1"] .tabitem,
+body[data-gbtn="1"] .clr,body[data-gbtn="1"] .bgrow label,body[data-gbtn="1"] .sw,
+body[data-gbtn="1"] .favSearch,body[data-gbtn="1"] .rate,body[data-gbtn="1"] .seek,
+body[data-gbtn="1"] .pill,body[data-gbtn="1"] .lnk{border-radius:999px}
+/* 主播放页控制键：上一首 / 下一首 / 收藏 / 声音 / 播放模式 / 倍速
+   不裹圆形底盘（收藏就只画五角星），霜面只落在图案内部：用图案自身做遮罩，
+   svg 的笔画颜色置透明，让遮罩里的霜面成为图案本身。 */
+body[data-gbtn="1"] #btnFav,body[data-gbtn="1"] #btnMute,body[data-gbtn="1"] #btnPrev,
+body[data-gbtn="1"] #btnNext,body[data-gbtn="1"] #btnMode,body[data-gbtn="1"] #btnRate{
+  background:none;border:0;box-shadow:none;border-radius:0;
+}
+body[data-gbtn="1"] #btnFav:hover,body[data-gbtn="1"] #btnMute:hover,body[data-gbtn="1"] #btnPrev:hover,
+body[data-gbtn="1"] #btnNext:hover,body[data-gbtn="1"] #btnMode:hover{background:none}
+body[data-gbtn="1"] #btnFav svg,body[data-gbtn="1"] #btnMute svg,body[data-gbtn="1"] #btnPrev svg,
+body[data-gbtn="1"] #btnNext svg,body[data-gbtn="1"] #btnMode svg{
+  background:linear-gradient(180deg,rgba(255,255,255,min(1,calc(.98 * var(--gbtnk,1)))),rgba(255,255,255,min(1,calc(.46 * var(--gbtnk,1)))));
+  -webkit-mask-repeat:no-repeat;-webkit-mask-position:center;-webkit-mask-size:100% 100%;
+  color:transparent;
+}
+body[data-gbtn="1"] #btnFav svg{
+  -webkit-mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 3.4l2.72 5.6 6.08.85-4.4 4.32 1.04 6.1L12 17.4l-5.44 2.87 1.04-6.1L3.2 9.85l6.08-.85z' fill='%23fff' fill-opacity='0.30' stroke='%23fff' stroke-width='2.1' stroke-linejoin='round'/></svg>");
+}
+body[data-gbtn="1"] #btnMute svg{
+  -webkit-mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M4 9h3.5L12 4.8v14.4L7.5 15H4z' fill='%23fff'/><path d='M15.5 8.6a4.7 4.7 0 0 1 0 6.8' fill='none' stroke='%23fff' stroke-width='1.8' stroke-linecap='round'/></svg>");
+}
+body[data-gbtn="1"] #btnPrev svg{
+  -webkit-mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M7 5h2v14H7zM19 5v14L9.5 12z' fill='%23fff'/></svg>");
+}
+body[data-gbtn="1"] #btnNext svg{
+  -webkit-mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M15 5h2v14h-2zM5 5v14l9.5-7z' fill='%23fff'/></svg>");
+}
+body[data-gbtn="1"] #btnMode svg{
+  -webkit-mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M4 7h13' fill='none' stroke='%23fff' stroke-width='2.1' stroke-linecap='round'/><path d='M17 4.6 19.4 7 17 9.4' fill='%23fff'/><path d='M20 17H7' fill='none' stroke='%23fff' stroke-width='1.9' stroke-linecap='round'/><path d='M7 19.4 4.6 17 7 14.6' fill='%23fff'/></svg>");
+}
+/* 倍速是文字，直接把霜面裁进字形里 */
+body[data-gbtn="1"] #btnRate{
+  background-image:linear-gradient(180deg,rgba(255,255,255,min(1,calc(.95 * var(--gbtnk,1)))),rgba(255,255,255,min(1,calc(.44 * var(--gbtnk,1)))));
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+}
 /* 收藏 / 导入面板头部的搜索框 */
 .favSearch{
   flex:1 1 auto;min-width:0;height:20px;padding:1px 6px;margin:0 2px 0 4px;
