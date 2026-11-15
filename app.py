@@ -3222,7 +3222,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     resize_to(int(float(content_h)))
                 except Exception:
                     pass
-            send_json(self, {"ok": True, "on_top": is_topmost(find_hwnd())})
+            # 只回用户自己按的「置顶」状态；置顶最高会把窗口真的变成 topmost，
+            # 但绝不能拿窗口实际状态回填，否则开关会自己「开启」
+            send_json(self, {"ok": True, "on_top": bool(TOP["on"]),
+                             "topmost": bool(is_topmost(find_hwnd())),
+                             "hard": bool(TOP.get("hard"))})
             return
 
         if path == "/copy":
@@ -3438,9 +3442,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
 
         if path == "/toggle_top":
-            want = not bool(is_topmost(find_hwnd()))
+            # 以用户自己那个置顶开关为基准，别拿窗口实际 topmost 取反：
+            # 开着「置顶最高」时窗口本来就是 topmost，取反会让第一次点击变成关闭
+            want = not bool(TOP["on"])
             got = apply_top(want)
-            send_json(self, {"ok": got is not None, "on_top": bool(got)})
+            send_json(self, {"ok": got is not None, "on_top": bool(TOP["on"]),
+                             "topmost": bool(is_topmost(find_hwnd())),
+                             "hard": bool(TOP.get("hard"))})
             return
 
         if path == "/cache":
