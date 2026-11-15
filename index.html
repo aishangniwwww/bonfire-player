@@ -534,6 +534,9 @@ body[data-glass="3"] #setSheet{background:rgba(21,18,14,.58)}
 .favPanel.show{transform:translateX(0)}
 .favHead{display:flex;align-items:center;gap:6px;padding-bottom:6px;border-bottom:1px dashed rgba(233,222,197,.14)}
 .favHead b{font-family:var(--ui);font-size:12px;font-weight:600;color:var(--film);letter-spacing:0}
+.favHead b[role="button"]{cursor:pointer;padding:3px 5px;margin:-3px -5px;border-radius:6px;transition:background .16s,color .16s}
+.favHead b[role="button"]:hover{background:rgba(240,169,59,.14);color:#fff}
+.favHead b[role="button"]:focus-visible{outline:1px solid rgba(240,169,59,.6);outline-offset:1px}
 .favHead .grow{flex:1;min-width:0}
 .favHead .n{font-family:var(--mono);font-size:9px;color:#6E6152}
 .favList{flex:1;min-height:0;overflow:auto;padding:2px 0 6px}
@@ -1042,7 +1045,7 @@ body[data-glass="1"] .locPanel{background:rgba(20,17,13,.56)}
   <div class="favMask" id="favMask"></div>
   <aside class="favPanel" id="favPanel" aria-hidden="true">
     <div class="favHead">
-      <b id="favTitleTxt">我的收藏</b>
+      <b id="favTitleTxt" role="button" tabindex="0" title="点一下切到我的导入">我的收藏</b>
       <span class="grow"></span>
       <span class="n" id="favCount"></span>
       <button class="dkbtn" id="favClose" title="关闭收藏">×</button>
@@ -1050,10 +1053,10 @@ body[data-glass="1"] .locPanel{background:rgba(20,17,13,.56)}
     <div class="favList" id="favList"></div>
   </aside>
 
-  <!-- ===== 导入歌曲列表：收藏页按住往左滑拉出来 ===== -->
+  <!-- ===== 导入歌曲列表：点收藏页标题「我的收藏」一键切换 ===== -->
   <aside class="locPanel" id="locPanel" aria-hidden="true">
     <div class="favHead">
-      <b>导入歌曲列表</b>
+      <b id="locTitleTxt" role="button" tabindex="0" title="点一下切回我的收藏">我的导入</b>
       <span class="grow"></span>
       <span class="n" id="locPanelCount"></span>
       <button class="dkbtn" id="locClose" title="返回收藏">×</button>
@@ -1420,7 +1423,7 @@ var el = {};
     "devSel","devStat","btnDevRead","btnDevRestore","btnElev","optMsiSeg","optDevPrioSeg","optDevAffSeg",
     "accStat","optAccSeg","gameStat","btnGameScan","btnGameClean","rtssStat","rtssFps","btnRtss",
     "btnRtssOff","btnRtssGet","lyrLab","lyrSwitch","lyrTip","lyrOffBack","lyrOffZero","lyrOffFwd","lyrOffVal","lyrOffTip","locLab","locCopy","locLink","locTip","locClear",
- "locCount","locPanel","locClose","locList","locPanelCount",
+ "locCount","locPanel","locClose","locList","locPanelCount","locTitleTxt",
  "covSwitch","covTip",
  "covPanel","covBody","covClose","covSkip","covCount","covTitleTxt",
  "drawerSwitch","drawerTip","autoBootSw","autoBootTip"].forEach(function(k){ el[k] = document.getElementById(k); });
@@ -3300,27 +3303,23 @@ function playLocal(r){
   setView("main", true);
 }
 
-/* 收藏页手势：按住往左滑 → 拉出导入列表；在导入列表往右滑 → 回收藏 */
-(function(){
-  function swipe(el, dir, cb){
-    if(!el) return;
-    var sx = 0, sy = 0, on = false;
-    el.addEventListener("pointerdown", function(e){
-      sx = e.clientX; sy = e.clientY; on = true;
-    });
-    el.addEventListener("pointerup", function(e){
-      if(!on) return;
-      on = false;
-      var dx = e.clientX - sx, dy = e.clientY - sy;
-      if(Math.abs(dx) < 6 || Math.abs(dx) < Math.abs(dy)) return;   /* 只要是从右往左（或左往右）横向滑动就触发 */
-      if(dir === "left" && dx < 0) cb();
-      if(dir === "right" && dx > 0) cb();
-    });
-    el.addEventListener("pointercancel", function(){ on = false; });
-  }
-  swipe(el.favPanel, "left", function(){ openLoc(); });
-  swipe(el.locPanel, "right", function(){ closeLoc(); });
-})();
+/* 收藏页不再靠横向手势切换：小窗口里滑一下就是误触，改成点标题 */
+/* 点标题切换收藏 / 导入 */
+function toggleLoc(){
+  if(state.localOpen){ closeLoc(); } else { openLoc(); }
+}
+if(el.favTitleTxt){
+  el.favTitleTxt.addEventListener("click", function(e){ e.stopPropagation(); toggleLoc(); });
+  el.favTitleTxt.addEventListener("keydown", function(e){
+    if(e.key === "Enter" || e.key === " "){ e.preventDefault(); toggleLoc(); }
+  });
+}
+if(el.locTitleTxt){
+  el.locTitleTxt.addEventListener("click", function(e){ e.stopPropagation(); closeLoc(); });
+  el.locTitleTxt.addEventListener("keydown", function(e){
+    if(e.key === "Enter" || e.key === " "){ e.preventDefault(); closeLoc(); }
+  });
+}
 if(el.locPanel){ el.locPanel.addEventListener("click", function(e){ if(e.target === el.locPanel) closeLoc(); }); }
 
 loadLyrFollow();
