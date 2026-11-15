@@ -558,32 +558,46 @@ def pick_audio_folder():
         shell32 = ctypes.windll.shell32
         ole32 = ctypes.windll.ole32
         BIF_RETURNONLYFSDIRS = 0x0001
+        BIF_EDITBOX = 0x0010
         BIF_NEWDIALOGSTYLE = 0x0040
+        BIF_USENEWUI = BIF_EDITBOX | BIF_NEWDIALOGSTYLE
 
         class BROWSEINFO(ctypes.Structure):
             _fields_ = [("hwndOwner", wintypes.HWND), ("pidlRoot", ctypes.c_void_p),
-                        ("pszDisplayName", wintypes.LPWSTR), ("lpszTitle", wintypes.LPCWSTR),
+                        ("pszDisplayName", ctypes.c_void_p), ("lpszTitle", wintypes.LPCWSTR),
                         ("ulFlags", ctypes.c_uint), ("lpfn", ctypes.c_void_p),
                         ("lParam", wintypes.LPARAM), ("iImage", ctypes.c_int)]
 
-        name = ctypes.create_unicode_buffer(512)
+        # 这两个函数必须显式声明类型：默认 restype=int 会把 64 位 pidl 指针截成 32 位，
+        # SHGetPathFromIDListW 拿到野指针就 access violation（用户看到的就是「未选择」）
+        shell32.SHBrowseForFolderW.argtypes = [ctypes.POINTER(BROWSEINFO)]
+        shell32.SHBrowseForFolderW.restype = ctypes.c_void_p
+        shell32.SHGetPathFromIDListW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+        shell32.SHGetPathFromIDListW.restype = wintypes.BOOL
+
+        name = ctypes.create_unicode_buffer(600)
         bi = BROWSEINFO()
         bi.hwndOwner = find_hwnd()
-        bi.pszDisplayName = ctypes.cast(name, wintypes.LPWSTR)
+        bi.pszDisplayName = ctypes.cast(name, ctypes.c_void_p).value
         bi.lpszTitle = "选择放歌的文件夹"
-        bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE
+        bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_USENEWUI
         try:
             ole32.CoInitialize(None)
         except Exception:
             pass
         pidl = shell32.SHBrowseForFolderW(ctypes.byref(bi))
         if not pidl:
+            log_api("pick folder: 用户取消")
             return []
-        path_buf = ctypes.create_unicode_buffer(1024)
-        shell32.SHGetPathFromIDListW(ctypes.c_void_p(pidl), path_buf)
-        ole32.CoTaskMemFree(ctypes.c_void_p(pidl))
-        folder = path_buf.value
+        path_buf = ctypes.create_unicode_buffer(2048)
+        ok = shell32.SHGetPathFromIDListW(pidl, path_buf)
+        try:
+            ole32.CoTaskMemFree(pidl)
+        except Exception:
+            pass
+        folder = path_buf.value if ok else ""
         if not folder or not os.path.isdir(folder):
+            log_api("pick folder: 路径取不到 ok=%s got=%r" % (ok, folder))
             return []
         LAST_FOLDER[0] = folder
         rows = scan_audio_files(folder, 3)
@@ -602,7 +616,8 @@ def local_import(mode="copy", paths=None, tag_dir=None):
     当作没导入过，直接把老记录修好重新加回来（以前会被判成「已导入」）"""
     got = paths if paths is not None else pick_audio_files()
     if not got:
-        return {"ok": False, "why": "未选择文件", "rows": local_load(), "added": 0}
+        why = "没选择文件，导入取消" if paths is None else "这个文件夹里没找到音频文件"
+        return {"ok": False, "why": why, "rows": local_load(), "added": 0}
     rows = local_prune()
     ids = [r.get("id", 0) for r in rows] or [0]
     nid = max(ids) + 1
@@ -1284,7 +1299,8 @@ gdi32.CreateEllipticRgn.restype = ctypes.c_void_p
 user32.SetWindowRgn.argtypes = [wintypes.HWND, ctypes.c_void_p, wintypes.BOOL]
 
 
-BG_REAL = {"last": 0.0, "raw": None, "rect": None, "cache": {}, "fail": 0, "warned": False}
+BG_REAL = {"last": 0.0, "raw": None, "rect": None, "cache": {}, "fail": 0, "warned": False,
+           "seq": 0}
 SHOT_INTERVAL = 0.22
 
 
@@ -1499,8 +1515,10 @@ def bg_frame_jpeg(quality=62):
         return None
 
 
-def bg_stream(handler, fps=60, quality=62):
-    """multipart/x-mixed-replace 的实时画面流：<img> 直接接着放，浏览器自己按帧刷新。"""
+def bg_stream(handler, fps=60, quality=62, sid=""):
+    """multipart/x-mixed-replace 的实时画面流：<img> 直接接着放，浏览器自己按帧刷新。
+    sid 是页面自己生成的会话号，帧数按 sid 分开记——一个页面冻住时，
+    别的页面/探测脚本还在推帧，也不会把它的看门狗骗过去。"""
     handler.send_response(200)
     handler.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
     handler.send_header("Cache-Control", "no-store")
@@ -1522,6 +1540,12 @@ def bg_stream(handler, fps=60, quality=62):
                                     b"\r\n\r\n" + data + b"\r\n")
                 handler.wfile.flush()
                 n += 1
+                BG_REAL["seq"] = BG_REAL.get("seq", 0) + 1   # 页面靠这个判断流是不是还活着
+                if sid:
+                    bs = BG_REAL.setdefault("byid", {})
+                    bs[sid] = bs.get(sid, 0) + 1
+                    if len(bs) > 20:
+                        bs.pop(next(iter(bs)))
                 last = data
             except Exception:
                 break
@@ -3674,7 +3698,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 q = int(float((qs.get("q") or ["62"])[0]))
             except Exception:
                 q = 62
-            bg_stream(self, fps=fps, quality=q)
+            bg_stream(self, fps=fps, quality=q, sid=(qs.get("sid") or [""])[0][:32])
             return
         if path == "/bgshot":
             # 窗口后面那块屏幕的实时模糊快照（窗口本身已从截图里排除）
@@ -3918,6 +3942,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             send_json(self, {"ok": got is not None, "on_top": bool(TOP["on"]),
                              "topmost": bool(is_topmost(find_hwnd())),
                              "hard": bool(TOP.get("hard"))})
+            return
+
+        if path == "/bgseq":
+            sid = (qs.get("sid") or [""])[0][:32]
+            n = BG_REAL.get("byid", {}).get(sid) if sid else BG_REAL.get("seq", 0)
+            send_json(self, {"n": n if n is not None else 0,
+                             "last": round(BG_REAL.get("last", 0), 3)})
             return
 
         if path == "/cache":

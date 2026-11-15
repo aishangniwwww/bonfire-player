@@ -784,6 +784,8 @@ body[data-gbtn="1"] .icobtn,body[data-gbtn="1"] .sbt,body[data-gbtn="1"] .tabite
 body[data-gbtn="1"] .clr,body[data-gbtn="1"] .bgrow label,body[data-gbtn="1"] .sw,
 body[data-gbtn="1"] .favSearch,body[data-gbtn="1"] .rate,body[data-gbtn="1"] .seek,
 body[data-gbtn="1"] .pill,body[data-gbtn="1"] .lnk{border-radius:999px}
+/* 打成胶囊以后同样的内边距会显得发胖，左右各收 2px（只收一点，别把字挤着小一号） */
+body[data-gbtn="1"] .opt{padding-left:7px;padding-right:7px}
 /* 主播放页控制键：上一首 / 下一首 / 收藏 / 声音 / 播放模式 / 倍速
    不裹圆形底盘（收藏就只画五角星），霜面只落在图案内部：用图案自身做遮罩，
    svg 的笔画颜色置透明，让遮罩里的霜面成为图案本身。 */
@@ -6033,7 +6035,7 @@ function paintBgVars(){
 /* 玻璃底：后台把「这扇窗后面的屏幕」以 60 帧推成 MJPEG 流，页面用 <img> 接住，
    模糊交给 CSS filter（GPU 干的，能跑 60 帧）。所以后面放视频、刷网页、打游戏，
    玻璃里都是它们的实时模糊版。 */
-var _shotLive = false, _shotRetry = null, _shotWait = null, _shotIdx = -1;
+var _shotLive = false, _shotRetry = null, _shotWait = null, _shotIdx = -1, _shotSid = "";
 function shotImgs(){
   return [document.getElementById("glassShot"), document.getElementById("glassShot2")];
 }
@@ -6057,9 +6059,10 @@ function shotStart(){
   if(_shotRetry){ clearTimeout(_shotRetry); _shotRetry = null; }
   if(_shotWait){ clearInterval(_shotWait); _shotWait = null; }
   _shotLive = true;
+  _shotSid = "s" + Math.random().toString(36).slice(2, 8) + Date.now().toString(36);
   img.style.opacity = "0";
   img.style.filter = "blur(" + shotBlurPx().toFixed(1) + "px)";
-  img.src = "/bgstream?fps=" + shotFps() + "&q=62&t=" + Date.now();
+  img.src = "/bgstream?fps=" + shotFps() + "&q=62&tid=" + Date.now() + "&sid=" + _shotSid;
   var t0 = Date.now();
   _shotWait = setInterval(function(){
     if(!_shotLive){ clearInterval(_shotWait); _shotWait = null; return; }
@@ -6101,35 +6104,32 @@ function shotRestart(){
   if(_shotRetry) clearTimeout(_shotRetry);
   _shotRetry = setTimeout(function(){ _shotRetry = null; if(state.glass || state.bgt) shotStart(); }, 250);
 }
-/* 看门狗：MJPEG 被浏览器悄悄掐断时不一定会触发 onerror，<img> 就那么定在最后一帧上，
-   用户看到的就是「毛玻璃变成一张不动的图片」。所以每 1.5 秒把当前帧缩成 8x8 取个指纹，
-   连续 6 次一模一样就当作流已经死了，直接换一张图重新接流（桌面真静止时最多多换一次，看不出来）。 */
-var _wdTimer = null, _wdSig = "", _wdSame = 0, _wdCv = null;
-function shotSig(){
-  try{
-    var imgs = shotImgs(), cur = imgs[_shotIdx === 0 ? 0 : (_shotIdx < 0 ? -1 : _shotIdx)];
-    if(!cur){ cur = imgs.filter(function(x){ return x && x.naturalWidth > 0; })[0]; }
-    if(!cur || !cur.naturalWidth) return "";
-    if(!_wdCv){ _wdCv = document.createElement("canvas"); _wdCv.width = 8; _wdCv.height = 8; }
-    var c = _wdCv.getContext("2d");
-    c.drawImage(cur, 0, 0, 8, 8);
-    var d = c.getImageData(0, 0, 8, 8).data, s = [];
-    for(var i = 0; i < d.length; i += 4){ s.push(d[i] >> 4); }
-    return s.join(".");
-  }catch(e){ return ""; }
+/* 看门狗：MJPEG 被浏览器悄悄掐断时不一定会触发 <img> 的 onerror，画面就定在最后一帧，
+   用户看到的就是「毛玻璃变成一张不动的图片」。后端每推一帧就给「这个会话」的计数器 +1，
+   页面每 0.9 秒问一次 /bgseq?sid=：连着三次没涨就判定自己那条流死了，换图重接（约 2.7 秒自愈）。
+   计数器按 sid 分开记，所以别的页面/探测脚本在推帧也骗不过它，桌面再静止也不会误判。 */
+var _wdTimer = null, _wdN = -1, _wdStuck = 0, _wdBusy = false;
+function _wdKill(){
+  _wdN = -1; _wdStuck = 0;
+  shotRestart();
 }
 function shotWatchdog(){
-  if(!_shotLive){ _wdSig = ""; _wdSame = 0; return; }
-  var s = shotSig();
-  if(!s) return;
-  if(s === _wdSig){
-    _wdSame++;
-    if(_wdSame >= 6){ _wdSame = 0; _wdSig = ""; shotRestart(); }
-  }else{
-    _wdSig = s; _wdSame = 0;
-  }
+  if(!_shotLive){ _wdN = -1; _wdStuck = 0; return; }
+  if(_wdBusy || !_shotSid) return;
+  _wdBusy = true;
+  fetch("/bgseq?sid=" + encodeURIComponent(_shotSid), {cache:"no-store"}).then(function(r){ return r.json(); }).then(function(d){
+    _wdBusy = false;
+    if(!d || !_shotLive) return;
+    if(_wdN < 0){ _wdN = d.n; return; }
+    if(d.n === _wdN){
+      _wdStuck++;
+      if(_wdStuck >= 3) _wdKill();
+    }else{ _wdN = d.n; _wdStuck = 0; }
+  }).catch(function(){ _wdBusy = false; });
 }
-if(!_wdTimer) _wdTimer = setInterval(shotWatchdog, 1500);
+if(!_wdTimer) _wdTimer = setInterval(shotWatchdog, 900);
+/* 排查用：/stat 里看不到页面内部状态时，控制台里 bfShotState() 一眼就知道流死没死 */
+window.bfShotState = function(){ return {live: _shotLive, sid: _shotSid, n: _wdN, stuck: _wdStuck}; };
 function paintGlass(){
   var on = !!state.glass;
   var px = on ? Math.max(2, Math.min(28, state.glassPx || 13)) : 0;
@@ -6176,13 +6176,29 @@ if(el.glassRange){
     try{ localStorage.setItem("film.glasspx.v1", String(state.glassPx)); }catch(e){}
   });
 }
-/* 毛玻璃化按钮（旁边进度条调按钮的模糊量） */
+/* 胶囊一撑圆，同样的内边距会显得发胖：开启后把设置里 .opt 的 min-width 统一收 6px，
+   关掉就还原。原值存在 data-mw0 里，来回切不会越缩越小。 */
+function narrowOpts(on){
+  var list = document.querySelectorAll(".opt");
+  Array.prototype.forEach.call(list, function(b){
+    if(on){
+      var w = b.style.minWidth || getComputedStyle(b).minWidth;
+      if(!b.getAttribute("data-mw0")) b.setAttribute("data-mw0", w || "0px");
+      var base = parseFloat(b.getAttribute("data-mw0")) || 0;
+      if(base > 0) b.style.minWidth = Math.max(30, base - 6) + "px";
+    }else if(b.getAttribute("data-mw0")){
+      b.style.minWidth = b.getAttribute("data-mw0");
+      b.removeAttribute("data-mw0");
+    }
+  });
+}
 function paintGbtn(){
   var on = !!state.gbtn;
   var px = Math.max(2, Math.min(28, state.gbtnPx || 12));
   document.body.setAttribute("data-gbtn", on ? "1" : "0");
   document.body.style.setProperty("--gbtnblur", (on ? px : 0) + "px");
   document.body.style.setProperty("--gbtnk", String(on ? Math.min(1.6, 0.45 + px / 28) : 1));
+  narrowOpts(on);
   if(el.gbtnSwitch){
     el.gbtnSwitch.textContent = on ? "开启" : "关闭";
     el.gbtnSwitch.classList.toggle("on", on);
