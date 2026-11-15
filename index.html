@@ -2866,6 +2866,33 @@ function autoStartPlay(){
   for(var i=0; i<state.fav.length; i++){ if(state.fav[i].k === k){ idx = i; break; } }
   if(idx < 0) return false;
   var f = state.fav[idx];
+  /* 本地导入的歌：直接播本地文件。以前这里一律按歌名去云端搜，
+     本地歌被当成「网上没版」→ 弹没版权 → 自己跳到下一首，等于把用户的歌换掉了 */
+  if(String(k).indexOf("local#") === 0){
+    var lid = parseInt(String(k).slice(6), 10) || 0;
+    var hit = null;
+    for(var j=0; j<(state.local || []).length; j++){
+      if(Number(state.local[j].id) === lid){ hit = state.local[j]; break; }
+    }
+    toast("默认播放：" + f.name);
+    if(hit){
+      playFav(idx);
+    }else{
+      /* 缓存里没有就向后台要一次，确实被删了才放弃 */
+      fetch("/local/list", {cache:"no-store"}).then(function(r){ return r.json(); }).then(function(d){
+        var rows = (d && d.rows) || [];
+        state.local = rows; paintLocCount(); renderLocList();
+        var ok = false;
+        for(var m=0; m<rows.length; m++){ if(Number(rows[m].id) === lid) ok = true; }
+        if(ok){ playFav(idx); }
+        else{
+          toast("《" + f.name + "》已经从导入列表里删掉了，不自动播了");
+          setTimeout(function(){ autoStartNextFav(idx); }, 900);
+        }
+      }).catch(function(){ playFav(idx); });
+    }
+    return true;
+  }
   /* 直链会过期，启动时按歌名重新检索，拿当次可播的那版 */
   var q = f.name + (f.artist ? (" " + f.artist) : "");
   if(el.q) el.q.value = q;
@@ -2874,6 +2901,16 @@ function autoStartPlay(){
   try{ search(q, true, null, false); }
   catch(e){ playFav(idx); }
   return true;
+}
+/* 默认那首没了：挑收藏里另外一首能放的，别让启动直接空着 */
+function autoStartNextFav(badIdx){
+  for(var i=0; i<state.fav.length; i++){
+    if(i === badIdx) continue;
+    var f = state.fav[i];
+    if(String(f.k).indexOf("local#") === 0) continue;
+    playFav(i);
+    return;
+  }
 }
 function renderFavList(){
   if(!el.favList) return;
@@ -5304,20 +5341,49 @@ function buildSetTabs(){
   fetch("/ver", {cache:"no-store"}).then(function(r){ return r.json(); }).then(function(d){
     if(verNow && d && d.ver) verNow.textContent = "版本 " + d.ver;
   }).catch(function(){});
-  function doUpdate(url){
+  function doUpdate(url, size){
     closeCfm();
     upSay("正在下载安装包…");
-    try{ toast("开始下载新版安装包"); }catch(e){}
-    fetch("/update/run?url=" + encodeURIComponent(url), {cache:"no-store"})
+    try{ toast("开始下载新版安装包，进度看这里"); }catch(e){}
+    fetch("/update/run?url=" + encodeURIComponent(url) + "&size=" + (size || 0), {cache:"no-store"})
       .then(function(r){ return r.json(); })
       .then(function(d){
-        if(d && d.ok){
-          upSay("安装程序已启动，马上重启");
-          try{ toast("装好后会自动打开 Bonfire"); }catch(e){}
-        }else{
+        if(!d || !d.ok){
           upSay((d && d.why) || "更新失败", true);
           try{ toast("更新失败：" + ((d && d.why) || "未知原因")); }catch(e){}
+          return;
         }
+        var timer = null, lastStage = "", lastPct = -1;
+        function poll(){
+          fetch("/update/stat", {cache:"no-store"})
+            .then(function(r){ return r.json(); })
+            .then(function(s){
+              if(!s || !s.stage) return;
+              if(s.stage === "failed"){
+                clearTimeout(timer);
+                upSay("更新失败：" + (s.err || "未知原因"), true);
+                try{ toast("更新失败：" + (s.err || "未知原因")); }catch(e){}
+                return;
+              }
+              if(s.stage === "done"){
+                clearTimeout(timer);
+                upSay("安装程序已打开，跟着点安装就行");
+                try{ toast("安装程序已打开，装完会自动开 Bonfire"); }catch(e){}
+                return;
+              }
+              var t;
+              if(s.stage === "download"){
+                t = "正在下载 " + (s.pct || 0) + "%" + (s.msg ? " · " + s.msg : "");
+              }else{
+                t = s.msg || "正在准备…";
+              }
+              if(t !== lastStage) upSay(t);
+              lastStage = t;
+              timer = setTimeout(poll, 700);
+            })
+            .catch(function(){ timer = setTimeout(poll, 1500); });
+        }
+        poll();
       })
       .catch(function(){ upSay("更新失败：请求发不出去", true); });
   }
@@ -5336,7 +5402,7 @@ function buildSetTabs(){
       upSay("发现新版本 " + d.latest);
       openCfm("发现新版本 " + d.latest + "，要更新吗？",
         "现在是 " + d.cur + "，新版 " + d.latest + "。点「是」会下载安装包、自动装回原目录并重启；收藏、导入的歌和设置都保留。",
-        "是", function(){ doUpdate(d.url); });
+        "是", function(){ doUpdate(d.url, d.size); });
     }).catch(function(){
       upBtn.disabled = false;
       upSay("检查失败：请求发不出去", true);

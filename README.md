@@ -25,7 +25,7 @@
 
 **装好的（推荐）**
 
-1. 到 [Releases](https://github.com/aishangniwwww/bonfire-player/releases/latest) 下载 `Bonfire-Setup-1.2.0.zip`（19.3 MB），**解压**出里面的 `Bonfire-安装程序.exe`；
+1. 到 [Releases](https://github.com/aishangniwwww/bonfire-player/releases/latest) 下载 `Bonfire-Setup-1.2.1.zip`（19.3 MB），**解压**出里面的 `Bonfire-安装程序.exe`；
 2. 双击 → 选目录（默认 `D:\Bonfire`）→ 可选桌面 / 开始菜单快捷方式 → 装完可直接启动；之后从桌面或开始菜单再开，不会重复解压；
 3. 卸载走「设置 → 应用」或目录里的 `卸载 Bonfire.exe`，右键菜单也能卸载。
 
@@ -156,7 +156,7 @@ python app.py
 - 每项都写着中文名，即使系统缺字体、原生名渲染成方框也能点对；缺字体的会标「需字体」
 
 **其他**
-- **检查更新**：设置 → 关于 显示当前版本，点「检查更新」问 GitHub 最新 Release；有新版本弹「发现新版本 x.x.x，要更新吗？」，点「是」自动下载安装包、静默装回原目录并重启——**收藏、导入的歌、封面、偏好设置都保留**（数据在 `%LOCALAPPDATA%\FilmMusicWindow`，升级只换 exe）
+- **检查更新**：设置 → 关于 显示当前版本，点「检查更新」问 GitHub 最新 Release；有新版本弹「发现新版本 x.x.x，要更新吗？」，点「是」后窗口里实时显示下载百分比（多镜像自动换、下完校验 zip 完整才往下走），然后**弹出安装程序**、默认装的就是原目录，装完自动开新版——**收藏、导入的歌、封面、偏好设置都保留**（数据在 `%LOCALAPPDATA%\FilmMusicWindow`，升级只换 exe）
 - 倍速 0.75 / 1 / 1.25 / 1.5 / 2（无边框竖排小菜单）、单曲循环 / 顺序播放
 - 19 种文字界面（地球按钮在设置里）
 - 窗口内滚轮调音量、A/← 后退 5s、按住 D/→ 2 倍速、空格暂停（都在鼠标悬停于窗口内时生效）

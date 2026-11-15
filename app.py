@@ -27,7 +27,7 @@ import zipfile
 from ctypes import wintypes
 
 APP_TITLE = "Bonfire"
-APP_VER = "1.2.0"
+APP_VER = "1.2.1"
 UPDATE_API = "https://api.github.com/repos/aishangniwwww/bonfire-player/releases/latest"
 WIN_W = 300
 WIN_H = 312
@@ -370,73 +370,152 @@ def update_install_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 
-def update_run(url):
-    """下载新版安装包 → 解出安装程序 → 静默装回原目录并重启自己"""
+UPDATE_STATE = {"stage": "idle", "pct": 0, "got": 0, "total": 0,
+                "msg": "", "err": "", "exe": "", "dir": ""}
+UPDATE_RUN = {"on": False}
+
+
+def update_reset():
+    UPDATE_STATE.update({"stage": "idle", "pct": 0, "got": 0, "total": 0,
+                         "msg": "", "err": "", "exe": "", "dir": ""})
+
+
+def _dl_one(u, zpath, expect):
+    """从一个地址把安装包拖下来，边下边报进度；下完做体积+zip 完整性校验"""
+    req = urllib.request.Request(u, headers={"User-Agent": "Bonfire/%s" % APP_VER})
+    tmp = zpath + ".part"
+    try:
+        os.remove(tmp)
+    except Exception:
+        pass
+    got = 0
+    total = expect
+    t0 = time.time()
+    last = 0.0
+    with urllib.request.urlopen(req, timeout=25) as r:
+        try:
+            cl = int(r.headers.get("Content-Length") or 0)
+            if cl > 0:
+                total = cl
+        except Exception:
+            pass
+        UPDATE_STATE["total"] = total
+        with open(tmp, "wb") as f:
+            while True:
+                if time.time() - t0 > 300:          # 整个文件最多给 5 分钟
+                    raise RuntimeError("下载超时")
+                chunk = r.read(262144)
+                if not chunk:
+                    break
+                f.write(chunk)
+                got += len(chunk)
+                if got > 96 * 1024 * 1024:
+                    raise RuntimeError("安装包大得不对劲")
+                now = time.time()
+                if now - last > 0.35:
+                    last = now
+                    UPDATE_STATE["got"] = got
+                    UPDATE_STATE["pct"] = int(got * 100 / total) if total else 0
+                    UPDATE_STATE["msg"] = "已下 %.1f MB%s" % (
+                        got / 1048576.0,
+                        (" / %.1f MB" % (total / 1048576.0)) if total else "")
+    if got < 1024:
+        raise RuntimeError("下载到的文件太小")
+    if expect and got < expect * 0.98:
+        raise RuntimeError("文件没下全（%d / %d 字节）" % (got, expect))
+    with zipfile.ZipFile(tmp) as z:                # 半截 zip 在这里就会炸，不往下走
+        bad = z.testzip()
+        if bad:
+            raise RuntimeError("安装包损坏：%s" % bad)
+    os.replace(tmp, zpath)
+    UPDATE_STATE["got"] = got
+    UPDATE_STATE["pct"] = 100
+    return got
+
+
+def _update_worker(url):
+    up_dir = os.path.join(DATA_DIR, "update")
+    os.makedirs(up_dir, exist_ok=True)
+    zpath = os.path.join(up_dir, "Bonfire-Setup.zip")
+    exe = os.path.join(up_dir, "Bonfire-Setup.exe")
+    expect = int(UPDATE_STATE.get("total") or 0)
+    # 实测国内直连 20MB 要三分钟，ghfast 镜像十几秒就下完，先试快的
+    mirrors = ["https://ghfast.top/" + url, url,
+               "https://gh-proxy.com/" + url, "https://ghproxy.net/" + url,
+               "https://gh.llkk.cc/" + url]
+    last_err = ""
+    got = False
+    for u in mirrors:
+        try:
+            UPDATE_STATE["msg"] = "正在连接 %s…" % u.split("/")[2]
+            _dl_one(u, zpath, expect)
+            got = True
+            log_api("update downloaded via %s (%d bytes)" % (u.split("/")[2], UPDATE_STATE["got"]))
+            break
+        except Exception as e:
+            last_err = str(e)
+            UPDATE_STATE["pct"] = 0
+            log_api("update download fail via %s: %r" % (u.split("/")[2], e))
+    if not got:
+        UPDATE_STATE.update({"stage": "failed", "msg": "下载失败", "err": last_err or "未知原因"})
+        log_api("update failed: %s" % last_err)
+        return
+    UPDATE_STATE.update({"stage": "extract", "msg": "正在解压安装程序…"})
+    try:
+        with zipfile.ZipFile(zpath) as z:
+            hit = [n for n in z.namelist() if n.lower().endswith(".exe")]
+            if not hit:
+                raise RuntimeError("安装包里没有 exe")
+            hit.sort(key=lambda n: 0 if "setup" in n.lower() or "安装" in n else 1)
+            if os.path.exists(exe):
+                os.remove(exe)
+            with z.open(hit[0]) as src, open(exe, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+    except Exception as e:
+        UPDATE_STATE.update({"stage": "failed", "msg": "解压失败", "err": str(e)})
+        log_api("update unzip fail %r" % e)
+        return
+    target = update_install_dir()
+    UPDATE_STATE.update({"stage": "install", "msg": "正要打开安装程序…",
+                         "exe": exe, "dir": target})
+    try:
+        # 带窗口跑，用户能看到安装界面；--dir 让它默认装回原目录 --launch 装完自动开
+        subprocess.Popen([exe, "--dir", target, "--launch"],
+                         creationflags=0x00000008 | 0x00000200,
+                         close_fds=True)
+        log_api("update installer opened -> %s (target=%s)" % (exe, target))
+        UPDATE_STATE.update({"stage": "done", "msg": "安装程序已打开，跟着点安装就行"})
+    except Exception as e:
+        UPDATE_STATE.update({"stage": "failed", "msg": "安装程序拉不起来", "err": str(e)})
+        log_api("update launch fail %r" % e)
+        return
+
+
+def update_run(url, size=0):
+    """下载新版安装包 → 解出安装程序 → 打开安装程序装回原目录。
+    下载放到后台线程，页面轮询 /update/stat 看进度，不再傻等到超时。"""
     if not url:
         return {"ok": False, "why": "没有下载地址"}
     if not re.match(r"^https://", url):
         return {"ok": False, "why": "只认 https 地址"}
     if not re.search(r"github\.com|githubusercontent\.com", url):
         return {"ok": False, "why": "只从 GitHub 下载"}
-    up_dir = os.path.join(DATA_DIR, "update")
-    os.makedirs(up_dir, exist_ok=True)
-    zpath = os.path.join(up_dir, "Bonfire-Setup.zip")
-    # 国内直连 GitHub 下载常常先超时，多备两条镜像，谁快用谁
-    mirrors = [url, "https://ghfast.top/" + url, "https://gh-proxy.com/" + url]
-    last_err = ""
-    got = False
-    for u in mirrors:
-        try:
-            req = urllib.request.Request(u, headers={"User-Agent": "Bonfire/%s" % APP_VER})
-            with urllib.request.urlopen(req, timeout=45) as r:
-                with open(zpath, "wb") as f:
-                    while True:
-                        chunk = r.read(262144)
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                        if f.tell() > 64 * 1024 * 1024:
-                            raise RuntimeError("安装包大得不对劲")
-            if os.path.getsize(zpath) < 1024:
-                raise RuntimeError("下载到的文件太小")
-            got = True
-            log_api("update downloaded via %s" % u.split("/")[2])
-            break
-        except Exception as e:
-            last_err = str(e)
-            log_api("update download fail via %s: %r" % (u.split("/")[2], e))
-    if not got:
-        return {"ok": False, "why": "下载失败：%s" % last_err}
-    exe = os.path.join(up_dir, "Bonfire-Setup.exe")
-    try:
-        with zipfile.ZipFile(zpath) as z:
-            hit = [n for n in z.namelist() if n.lower().endswith(".exe")]
-            if not hit:
-                return {"ok": False, "why": "安装包里没有 exe"}
-            hit.sort(key=lambda n: 0 if "setup" in n.lower() or "安装" in n else 1)
-            with z.open(hit[0]) as src, open(exe, "wb") as dst:
-                shutil.copyfileobj(src, dst)
-    except Exception as e:
-        log_api("update unzip fail %r" % e)
-        return {"ok": False, "why": "解压失败：%s" % e}
-    target = update_install_dir()
+    if UPDATE_RUN["on"] and UPDATE_STATE.get("stage") in ("download", "extract", "install"):
+        return {"ok": True, "started": True, "busy": True}
+    update_reset()
+    UPDATE_STATE["total"] = int(size or 0)
+    UPDATE_STATE["stage"] = "download"
+    UPDATE_STATE["msg"] = "开始下载…"
+    UPDATE_RUN["on"] = True
 
-    def later():
+    def run():
         try:
-            log_api("update run -> %s (target=%s)" % (exe, target))
-            subprocess.Popen([exe, "--headless", target, "--no-desk", "--no-menu",
-                              "--launch", "--quiet"],
-                             creationflags=0x00000008 | 0x00000200)  # DETACHED_PROCESS | NEW_PROCESS_GROUP
-        except Exception as e:
-            log_api("update launch fail %r" % e)
-            return
-        time.sleep(0.4)
-        os._exit(0)      # 自己先关门，别让安装程序撞上文件占用
+            _update_worker(url)
+        finally:
+            UPDATE_RUN["on"] = False
 
-    # 先把响应回给页面（页面要弹 toast），2 秒后再拉安装程序——
-    # 安装程序第一步就 taskkill Bonfire，抢在前面回包才是安全顺序
-    threading.Timer(2.0, later).start()
-    return {"ok": True, "exe": exe, "dir": target}
+    threading.Thread(target=run, daemon=True).start()
+    return {"ok": True, "started": True}
 
 
 def local_prune(rows=None):
@@ -3306,7 +3385,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
 
         if path == "/update/run":
-            send_json(self, update_run((qs.get("url") or [""])[0].strip()))
+            url = (qs.get("url") or [""])[0]
+            size = int((qs.get("size") or ["0"])[0] or 0)
+            send_json(self, update_run(url, size))
+            return
+
+        if path == "/update/stat":
+            send_json(self, dict(UPDATE_STATE, ok=True))
             return
 
         if path == "/local/list":
