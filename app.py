@@ -14,6 +14,7 @@ import html
 import json
 import os
 import re
+import shutil
 import sys
 import subprocess
 import socket
@@ -225,6 +226,52 @@ def local_save(rows):
         pass
 
 
+LOCAL_COVERS = os.path.join(DATA_DIR, "covers")
+
+
+def local_cover_dir():
+    try:
+        os.makedirs(LOCAL_COVERS, exist_ok=True)
+    except Exception:
+        pass
+    return LOCAL_COVERS
+
+
+def local_cover_save(lid, url):
+    """把搜到的专辑封面落成本地缓存文件，返回给页面用的相对地址"""
+    url = (url or "").strip()
+    if not url or lid <= 0:
+        return ""
+    try:
+        d = local_cover_dir()
+        req = urllib.request.Request(url, headers={"User-Agent": UA,
+                                                   "Referer": "https://y.qq.com/"})
+        with urllib.request.urlopen(req, timeout=14) as r:
+            data = r.read()
+            ctype = (r.headers.get("Content-Type") or "").lower()
+        if not data or len(data) > 8 * 1024 * 1024:
+            return ""
+        ext = ".jpg"
+        if data[:8] == b"\x89PNG\r\n\x1a\n" or "png" in ctype:
+            ext = ".png"
+        elif data[:4] == b"RIFF" or "webp" in ctype:
+            ext = ".webp"
+        elif data[:3] == b"GIF":
+            ext = ".gif"
+        for old in os.listdir(d):
+            if old.split(".")[0] == str(lid):
+                try:
+                    os.remove(os.path.join(d, old))
+                except Exception:
+                    pass
+        with open(os.path.join(d, "%d%s" % (lid, ext)), "wb") as f:
+            f.write(data)
+        return "/local/coverfile?id=%d&v=%d" % (lid, int(time.time()))
+    except Exception as e:
+        log_api("local cover fail %r" % e)
+        return url
+
+
 def pick_audio_files():
     """系统多选文件框：只要音频"""
     try:
@@ -271,19 +318,54 @@ def pick_audio_files():
         return []
 
 
+def local_prune(rows=None):
+    """把「文件已经不在了」的记录清掉：用户在外面删了歌，列表跟着自愈，
+    免得下次导入同一首还被当成「已导入」"""
+    if rows is None:
+        rows = local_load()
+    keep = []
+    for r in rows:
+        p = r.get("path") or ""
+        if p and os.path.isfile(p):
+            keep.append(r)
+    if len(keep) != len(rows):
+        log_api("local prune %d -> %d" % (len(rows), len(keep)))
+        local_save(keep)
+    return keep
+
+
 def local_import(mode="copy"):
-    """导入选中的音频：copy=复制进软件目录，link=只记原路径"""
+    """导入选中的音频：copy=复制进软件目录，link=只记原路径
+    已经导入过、而且文件确实还在的才算重复；列表里那条记录文件早就丢了的，
+    当作没导入过，直接把老记录修好重新加回来（以前会被判成「已导入」）"""
     got = pick_audio_files()
     if not got:
         return {"ok": False, "why": "未选择文件", "rows": local_load(), "added": 0}
-    rows = local_load()
+    rows = local_prune()
     ids = [r.get("id", 0) for r in rows] or [0]
     nid = max(ids) + 1
     added = []
+    dup = []
+    failed = []
+    healed = 0
+
+    def alive_key(p):
+        try:
+            return os.path.normcase(os.path.abspath(p))
+        except Exception:
+            return ""
+
+    live = {}
+    for r in rows:
+        p = r.get("path") or ""
+        if p and os.path.isfile(p):
+            live[alive_key(p)] = r
+
     if mode == "copy":
         os.makedirs(LOCAL_MUSIC, exist_ok=True)
     for path in got:
         if not os.path.isfile(path):
+            failed.append({"name": os.path.basename(path), "why": "文件已经不在了"})
             continue
         try:
             if mode == "copy":
@@ -297,17 +379,44 @@ def local_import(mode="copy"):
                 real = dst
             else:
                 real = path
+            key = alive_key(real)
+            hit = live.get(key)
+            if hit is not None:
+                dup.append({"id": hit.get("id"), "name": hit.get("name")})
+                continue
+            size = os.path.getsize(real) if os.path.exists(real) else 0
+            # 列表里留着一条「文件已经没了」的同名同大小记录：复用它的 id，别再生一条
+            stale = None
+            for r in rows:
+                p = r.get("path") or ""
+                if p and not os.path.isfile(p):
+                    if os.path.basename(p) == os.path.basename(real) and int(r.get("size") or 0) in (0, size):
+                        stale = r
+                        break
+            if stale is not None:
+                stale.update({"name": os.path.splitext(os.path.basename(real))[0],
+                              "path": real, "size": size, "mode": mode,
+                              "added": int(time.time())})
+                live[key] = stale
+                added.append(stale)
+                healed += 1
+                continue
             e = {"id": nid, "name": os.path.splitext(os.path.basename(real))[0],
-                 "path": real, "size": os.path.getsize(real) if os.path.exists(real) else 0,
-                 "mode": mode, "added": int(time.time())}
+                 "path": real, "size": size, "mode": mode, "added": int(time.time()),
+                 "cover": ""}
             rows.append(e)
+            live[key] = e
             added.append(e)
             nid += 1
         except Exception as ex:
             log_api("local_import skip %r" % ex)
+            failed.append({"name": os.path.basename(path), "why": str(ex)[:80]})
     local_save(rows)
-    log_api("local import mode=%s added=%d" % (mode, len(added)))
-    return {"ok": True, "rows": rows, "added": added}
+    log_api("local import mode=%s added=%d dup=%d healed=%d failed=%d"
+            % (mode, len(added), len(dup), healed, len(failed)))
+    return {"ok": True, "rows": rows, "added": added, "dup": dup,
+            "failed": failed, "healed": healed}
+
 
 
 def safe_name(t):
@@ -3003,12 +3112,86 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
 
         if path == "/local/list":
-            send_json(self, {"ok": True, "rows": local_load()})
+            send_json(self, {"ok": True, "rows": local_prune()})
             return
 
         if path == "/local/import":
             mode = (qs.get("mode") or ["copy"])[0]
             send_json(self, local_import("link" if mode == "link" else "copy"))
+            return
+
+        if path == "/cover/search":
+            """给导入的本地歌曲找封面：按歌名问 QQ 音乐要元数据 + 专辑图"""
+            q = (qs.get("q") or [""])[0].strip()
+            rows = []
+            if q:
+                try:
+                    for r in qq_search(q, 24):
+                        if not r.get("cover"):
+                            continue
+                        rows.append({"name": r.get("name") or "", "artist": r.get("artist") or "",
+                                     "album": r.get("album") or "", "cover": r.get("cover") or "",
+                                     "dur": r.get("dur") or 0})
+                except Exception as e:
+                    log_api("cover search fail %r" % e)
+            send_json(self, {"ok": True, "q": q, "rows": rows[:24]})
+            return
+
+        if path == "/local/cover":
+            """点某个搜索结果：把它的专辑封面套到这首导入的歌上"""
+            try:
+                lid = int((qs.get("id") or ["0"])[0])
+            except Exception:
+                lid = 0
+            url = (qs.get("url") or [""])[0]
+            rows = local_load()
+            hit = None
+            for r in rows:
+                if r.get("id") == lid:
+                    hit = r
+                    break
+            if hit is None:
+                send_json(self, {"ok": False, "why": "这首歌不在导入列表里"}, 404)
+                return
+            got = local_cover_save(lid, url)
+            if not got:
+                send_json(self, {"ok": False, "why": "封面没下下来"})
+                return
+            hit["cover"] = got
+            hit["cover_src"] = url
+            local_save(rows)
+            log_api("local cover id=%d -> %s" % (lid, got))
+            send_json(self, {"ok": True, "id": lid, "cover": got, "rows": rows})
+            return
+
+        if path == "/local/coverfile":
+            try:
+                lid = int((qs.get("id") or ["0"])[0])
+            except Exception:
+                lid = 0
+            d = local_cover_dir()
+            fp = ""
+            try:
+                for fn in os.listdir(d):
+                    if fn.split(".")[0] == str(lid):
+                        fp = os.path.join(d, fn)
+                        break
+            except Exception:
+                pass
+            if not fp or not os.path.isfile(fp):
+                self.send_response(404)
+                self.end_headers()
+                return
+            ext = os.path.splitext(fp)[1].lower()
+            kind = {".png": "image/png", ".webp": "image/webp", ".gif": "image/gif"}.get(ext, "image/jpeg")
+            with open(fp, "rb") as f:
+                blob = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", kind)
+            self.send_header("Content-Length", str(len(blob)))
+            self.send_header("Cache-Control", "public, max-age=604800")
+            self.end_headers()
+            self.wfile.write(blob)
             return
 
         if path == "/local/del":
@@ -3021,8 +3204,22 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             rows = [r for r in rows if r.get("id") != lid]
             for g in gone:
                 try:
-                    if g.get("mode") == "copy" and os.path.isfile(g.get("path", "")):
-                        os.remove(g["path"])
+                    p = g.get("path") or ""
+                    # 只要文件在软件自己的音乐目录里，就一起删；别只看 mode 标签
+                    if os.path.isfile(p):
+                        try:
+                            inside = os.path.dirname(os.path.abspath(p)) == os.path.abspath(LOCAL_MUSIC)
+                        except Exception:
+                            inside = False
+                        if inside or g.get("mode") == "copy":
+                            os.remove(p)
+                except Exception:
+                    pass
+                try:
+                    d = local_cover_dir()
+                    for fn in os.listdir(d):
+                        if fn.split(".")[0] == str(lid):
+                            os.remove(os.path.join(d, fn))
                 except Exception:
                     pass
             local_save(rows)

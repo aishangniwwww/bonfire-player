@@ -25,7 +25,7 @@
 
 **装好的（推荐）**
 
-1. 到 [Releases](https://github.com/aishangniwwww/bonfire-player/releases/latest) 下载 `Bonfire-Setup-1.0.2.zip`（19.3 MB），**解压**出里面的 `Bonfire-安装程序.exe`；
+1. 到 [Releases](https://github.com/aishangniwwww/bonfire-player/releases/latest) 下载 `Bonfire-Setup-1.1.0.zip`（19.3 MB），**解压**出里面的 `Bonfire-安装程序.exe`；
 2. 双击 → 选目录（默认 `D:\Bonfire`）→ 可选桌面 / 开始菜单快捷方式 → 装完可直接启动；之后从桌面或开始菜单再开，不会重复解压；
 3. 卸载走「设置 → 应用」或目录里的 `卸载 Bonfire.exe`，右键菜单也能卸载。
 
@@ -112,6 +112,14 @@ python app.py
 
 **收藏**
 - 控制台五角星收藏、列表每行星点、点旋转播放器滑出收藏面板（右侧滑入，点空白或 × 收起）
+
+**本地歌曲导入 + 配封面**
+- 设置「本地歌曲」两个入口：**导入到软件**（复制进 `%LOCALAPPDATA%\FilmMusicWindow\music`，删原文件不影响）／**导入为链接**（只记原路径，不占空间）
+- 导入后自动收藏，导入列表（收藏页按住向左滑）里能播、能看大小、能单条移除或清空
+- **删歌不再误报「已导入」**：以前复制文件那步因为漏了 `import shutil` 静默失败，页面便把所有失败都当成「这些歌之前就导入过了」。现在少了模块补上，而且三种结果分开报——导进几首 / 几首本来就在列表里 / 几首没进来（附原因）
+- **列表自愈**：在外面把歌删了，下次打开导入列表或再导入时，指向失踪文件的记录会被自动清掉，所以同一首删掉之后可以重新导进来
+- **导入时配封面**（可关）：导入成功后右侧滑出「配封面」面板，按歌名搜专辑封面（QQ 音乐专辑图），点一张就套到这首先；歌名太脏可以在面板里改成干净歌名再搜，一首首配完自动关。封面会下载进 `%LOCALAPPDATA%\FilmMusicWindow\covers`，断网也能显示
+- 开关在设置「本地歌曲」里，状态记 `localStorage.film.loccover.v1`，关掉就不弹面板，随时可以再打开
 
 **背景**
 - 预设色卡 + 自选色
@@ -215,6 +223,13 @@ build.ps1             打包脚本
 | `POST /bgup` | 上传本地图片/视频/音频当背景（原始 body） |
 | `GET /bgmedia` | 流播背景媒体（支持 Range） |
 | `POST /txt?name=` | 纯文本落盘（歌词导出用） |
+| `GET /local/list` | 已导入的本地歌曲（顺手清掉指向失踪文件的死记录） |
+| `GET /local/import?mode=copy\|link` | 弹框选音频导入；返回 `added` / `dup` / `failed` 三份结果 |
+| `GET /local/del?id=` | 移除一首（文件在 Bonfire 自己的音乐目录里就一起删） |
+| `GET /local/file?id=` | 流播本地音频（支持 Range） |
+| `GET /cover/search?q=<歌名>` | 按歌名搜专辑封面（QQ 音乐元数据 + 300×300 专辑图） |
+| `GET /local/cover?id=&url=` | 把某张封面下载到本地并写回这首的 `cover` |
+| `GET /local/coverfile?id=` | 读回本地缓存封面 |
 
 指令举例：`__search_list`、`__row_0`、`__play_now`、`__next_song`、`__set_dl_on`、`__dl_current`、
 `__open_lyr`、`__close_lyr`、`__lyr_dl`、`__lyr_next`、`__lyr_prev`、`__dl_dir_<路径>`、
