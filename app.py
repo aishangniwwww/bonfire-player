@@ -27,7 +27,7 @@ import zipfile
 from ctypes import wintypes
 
 APP_TITLE = "Bonfire"
-APP_VER = "1.3.3"
+APP_VER = "1.3.4"
 UPDATE_API = "https://api.github.com/repos/aishangniwwww/bonfire-player/releases/latest"
 WIN_W = 300
 WIN_H = 312
@@ -1027,6 +1027,7 @@ PENDING = []
 PENDING_LOCK = threading.Lock()
 HB = {}
 HB_LOCK = threading.Lock()
+HB_SCALE = [0.0]
 HB_COUNT = [0]
 KG_CACHE = {}
 
@@ -1250,6 +1251,252 @@ def hard_top_loop():
 gdi32 = ctypes.windll.gdi32
 gdi32.CreateEllipticRgn.restype = ctypes.c_void_p
 user32.SetWindowRgn.argtypes = [wintypes.HWND, ctypes.c_void_p, wintypes.BOOL]
+
+
+BG_REAL = {"last": 0.0, "raw": None, "rect": None, "cache": {}, "fail": 0, "warned": False}
+SHOT_INTERVAL = 0.22
+
+
+def _bg_mark():
+    BG_REAL["last"] = time.time()
+
+
+def set_shot_affinity(hwnd):
+    """让这个窗口不出现在屏幕截图里（WDA_EXCLUDEFROMCAPTURE），
+    这样我们截「它后面那块屏幕」时不会被自己的窗户挡住。Win10 2004+ 才有。"""
+    try:
+        ok = user32.SetWindowDisplayAffinity(hwnd, 0x00000011)
+        log_api("shot affinity=%s" % ok)
+        return bool(ok)
+    except Exception as e:
+        log_api("shot affinity fail %r" % e)
+        return False
+
+
+class _FastGrab:
+    """复用同一套 DC/位图直接从屏幕上抄这块矩形，比每次 ImageGrab 建一遍便宜一半。
+    （ImageGrab 一帧 ~52ms，这里 ~24ms，也就能看出 40 帧；有独显的机器更快）"""
+
+    def __init__(self):
+        from ctypes import wintypes as _wt
+        self.u = ctypes.windll.user32
+        self.g = ctypes.windll.gdi32
+        self.size = None
+        self.src = None
+        self.mdc = None
+        self.bmp = None
+        self.buf = None
+        self.bi = None
+
+    def _init(self, w, h):
+        from ctypes import wintypes as _wt
+
+        class _BIH(ctypes.Structure):
+            _fields_ = [("biSize", ctypes.c_uint), ("biWidth", ctypes.c_long),
+                        ("biHeight", ctypes.c_long), ("biPlanes", ctypes.c_ushort),
+                        ("biBitCount", ctypes.c_ushort), ("biCompression", ctypes.c_uint),
+                        ("biSizeImage", ctypes.c_uint), ("biXPelsPerMeter", ctypes.c_long),
+                        ("biYPelsPerMeter", ctypes.c_long), ("biClrUsed", ctypes.c_uint),
+                        ("biClrImportant", ctypes.c_uint)]
+
+        self.u.GetDC.restype = ctypes.c_void_p
+        self.u.GetDC.argtypes = [ctypes.c_void_p]
+        self.g.CreateCompatibleDC.restype = ctypes.c_void_p
+        self.g.CreateCompatibleDC.argtypes = [ctypes.c_void_p]
+        self.g.CreateCompatibleBitmap.restype = ctypes.c_void_p
+        self.g.CreateCompatibleBitmap.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+        self.g.SelectObject.restype = ctypes.c_void_p
+        self.g.SelectObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        self.g.BitBlt.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                  ctypes.c_int, ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
+                                  ctypes.c_uint]
+        self.g.GetDIBits.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint,
+                                     ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p,
+                                     ctypes.c_uint]
+        self.src = self.u.GetDC(None)
+        self.mdc = self.g.CreateCompatibleDC(self.src)
+        self.bmp = self.g.CreateCompatibleBitmap(self.src, w, h)
+        self.g.SelectObject(self.mdc, self.bmp)
+        bi = _BIH()
+        bi.biSize = ctypes.sizeof(_BIH)
+        bi.biWidth = w
+        bi.biHeight = -h
+        bi.biPlanes = 1
+        bi.biBitCount = 32
+        self.bi = bi
+        self.buf = ctypes.create_string_buffer(w * h * 4)
+        self.size = (w, h)
+
+    def grab(self, box):
+        from PIL import Image
+        x, y, r, b = box
+        w, h = r - x, b - y
+        if w < 8 or h < 8:
+            return None
+        if self.size != (w, h):
+            self._init(w, h)
+        self.g.BitBlt(self.mdc, 0, 0, w, h, self.src, x, y, 0x00CC0020)
+        self.g.GetDIBits(self.mdc, self.bmp, 0, h, self.buf, ctypes.byref(self.bi), 0)
+        return Image.frombuffer("RGB", (w, h), self.buf.raw, "raw", "BGRX", 0, 1)
+
+    def close(self):
+        try:
+            if self.bmp:
+                self.g.DeleteObject(self.bmp)
+            if self.mdc:
+                self.g.DeleteDC(self.mdc)
+            if self.src:
+                self.u.ReleaseDC(None, self.src)
+        except Exception:
+            pass
+        self.size = None
+
+
+GRABBER = [None]
+
+
+def _bg_grab():
+    """截窗口当前那块屏幕（自己已被排除），返回 (PIL.Image, w, h)。"""
+    hwnd = find_hwnd()
+    if not hwnd:
+        return None
+    r = wintypes.RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(r))
+    w, h = r.right - r.left, r.bottom - r.top
+    if w < 8 or h < 8:
+        return None
+    if user32.IsIconic(hwnd):
+        return None
+    if GRABBER[0] is None:
+        GRABBER[0] = _FastGrab()
+    img = GRABBER[0].grab((r.left, r.top, r.right, r.bottom))
+    if img is None:
+        return None
+    return img, w, h
+
+
+def bg_loop():
+    while True:
+        time.sleep(SHOT_INTERVAL)
+        try:
+            hwnd = find_hwnd()
+            if not hwnd:
+                continue
+            idle = time.time() - BG_REAL["last"] > 1.6
+            if idle:
+                BG_REAL["raw"] = None
+                continue
+            # 只在按下快门这一瞬间把自己从截图里排除，拍完立刻恢复，
+            # 这样用户自己截图 / 录屏时窗口照常出现
+            user32.SetWindowDisplayAffinity(hwnd, 0x00000011)
+            try:
+                got = _bg_grab()
+            finally:
+                user32.SetWindowDisplayAffinity(hwnd, 0x00000000)
+            if not got:
+                continue
+            BG_REAL["raw"] = got
+            BG_REAL["fid"] = BG_REAL.get("fid", 0) + 1
+            BG_REAL["cache"] = {}
+            BG_REAL["fail"] = 0
+        except Exception as e:
+            BG_REAL["fail"] += 1
+            if BG_REAL["fail"] <= 3:
+                log_api("shot fail %r" % e)
+
+
+def bg_shot(radius):
+    """把最新截图糊一下，返回 JPEG bytes（老接口，页面流断了兜底用）。"""
+    raw = BG_REAL["raw"]
+    if raw is None:
+        got = _bg_grab()
+        if not got:
+            return None
+        raw = BG_REAL["raw"] = got
+    try:
+        radius = max(0.0, min(40.0, float(radius)))
+    except Exception:
+        radius = 12.0
+    key = round(radius)
+    cached = BG_REAL["cache"].get(key)
+    if cached:
+        return cached
+    try:
+        from PIL import Image, ImageFilter
+        import io
+        img = raw[0].convert("RGB")
+        if radius > 0.5:
+            img = img.filter(ImageFilter.GaussianBlur(radius=radius))
+        img.thumbnail((720, 720))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=72)
+        data = buf.getvalue()
+        BG_REAL["cache"] = {key: data}
+        return data
+    except Exception as e:
+        if not BG_REAL["warned"]:
+            BG_REAL["warned"] = True
+            log_api("shot blur fail %r" % e)
+        return None
+
+
+def bg_frame_jpeg(quality=62):
+    """抓一帧 → 直接 JPEG（不在这里糊）。模糊交给页面的 CSS filter，
+    那是 GPU 干的，可以跑到 60 帧；PIL 的高斯模糊一帧就要好几毫秒。"""
+    hwnd = find_hwnd()
+    if not hwnd:
+        return None
+    try:
+        user32.SetWindowDisplayAffinity(hwnd, 0x00000011)
+        try:
+            got = _bg_grab()
+        finally:
+            user32.SetWindowDisplayAffinity(hwnd, 0x00000000)
+        if not got:
+            return None
+        import io
+        img = got[0]                      # 已经是 RGB 了（frombuffer 直接给 RGB）
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality, optimize=False)
+        BG_REAL["last"] = time.time()
+        BG_REAL["jpg_fps"] = BG_REAL.get("jpg_fps", 0)
+        return buf.getvalue()
+    except Exception as e:
+        if not BG_REAL["warned"]:
+            BG_REAL["warned"] = True
+            log_api("shot frame fail %r" % e)
+        return None
+
+
+def bg_stream(handler, fps=60, quality=62):
+    """multipart/x-mixed-replace 的实时画面流：<img> 直接接着放，浏览器自己按帧刷新。"""
+    handler.send_response(200)
+    handler.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+    handler.send_header("Cache-Control", "no-store")
+    handler.send_header("Connection", "close")
+    handler.end_headers()
+    step = 1.0 / max(15, min(240, int(fps)))
+    n = 0
+    last = None                      # 抓不到帧的时候拿上一帧顶上，页面就不会空一下（黑闪）
+    while True:
+        t0 = time.time()
+        try:
+            data = bg_frame_jpeg(quality) or last
+        except Exception:
+            data = last
+        if data:
+            try:
+                handler.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n"
+                                    b"Content-Length: " + str(len(data)).encode() +
+                                    b"\r\n\r\n" + data + b"\r\n")
+                handler.wfile.flush()
+                n += 1
+                last = data
+            except Exception:
+                break
+        dt = time.time() - t0
+        time.sleep(max(0.0, step - dt))
+    log_api("bg stream closed after %d frames" % n)
 
 
 def polish_window(hwnd):
@@ -1499,9 +1746,14 @@ def resize_to(css_h):
     with HB_LOCK:
         inner_w = int(HB.get("w") or 0)
     _x, _y, w, h = rect_of(hwnd)
-    delta = (w - inner_w) if inner_w else 0
-    target = max(180, min(1200, int(css_h) + delta))
-    if h and abs(target - h) <= 2:
+    # 只认第一次测出来的缩放比，之后不再改：页面回报的 innerWidth 会随着
+    # 窗口尺寸/滚动条来回变，拿它算比例会自己喂自己，292↔214 每秒抖。
+    if not HB_SCALE[0] and inner_w > 0 and w > 0:
+        HB_SCALE[0] = max(0.75, min(2.0, float(w) / inner_w))
+    target = max(180, min(1200, int(round(int(css_h) * (HB_SCALE[0] or 1.0)))))
+    # 页面报的高度在 285/292 之间来回跳 7px（里面某块会因为视口高度变化
+    # 挤出不挤出滚动条），容差放到 8 就不会自己喂自己抖半截
+    if h and abs(target - h) <= 8:
         return h
     user32.SetWindowPos(hwnd, 0, 0, 0, w, target, SWP_NOMOVE | SWP_NOZORDER)
     # 区域是按旧尺寸算的，改高度后必须重算，否则圆角边上会漏黑底
@@ -3380,6 +3632,37 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             send_json(self, {"ok": True, "ver": APP_VER})
             return
 
+        if path == "/bgstream":
+            # 实时画面流（60 帧），模糊由页面的 CSS filter 做
+            try:
+                fps = int(float((qs.get("fps") or ["60"])[0]))
+            except Exception:
+                fps = 60
+            try:
+                q = int(float((qs.get("q") or ["62"])[0]))
+            except Exception:
+                q = 62
+            bg_stream(self, fps=fps, quality=q)
+            return
+        if path == "/bgshot":
+            # 窗口后面那块屏幕的实时模糊快照（窗口本身已从截图里排除）
+            BG_REAL["last"] = time.time()
+            try:
+                radius = float((qs.get("r") or ["12"])[0])
+            except Exception:
+                radius = 12.0
+            data = bg_shot(radius)
+            if not data:
+                send_json(self, {"ok": False, "why": "no shot"}, 503)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+
         if path == "/update/check":
             send_json(self, update_check())
             return
@@ -4109,6 +4392,7 @@ def main():
     threading.Thread(target=after_start, daemon=True).start()
     tray_start()
     threading.Thread(target=watch_loop, daemon=True).start()
+    threading.Thread(target=bg_loop, daemon=True).start()
     threading.Thread(target=hard_top_loop, daemon=True).start()
     if MULTI["on"]:
         # 多开时各用各的 WebView2 数据目录，否则第二个实例会被同一个 profile 卡住

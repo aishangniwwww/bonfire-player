@@ -25,7 +25,7 @@
 
 **装好的（推荐）**
 
-1. 到 [Releases](https://github.com/aishangniwwww/bonfire-player/releases/latest) 下载 `Bonfire-Setup-1.3.3.zip`（约 20 MB），**解压**出里面的 `Bonfire-安装程序.exe`；
+1. 到 [Releases](https://github.com/aishangniwwww/bonfire-player/releases/latest) 下载 `Bonfire-Setup-1.3.4.zip`（约 20 MB），**解压**出里面的 `Bonfire-安装程序.exe`；
 2. 双击 → 选目录（默认 `D:\Bonfire`）→ 可选桌面 / 开始菜单快捷方式 → 装完可直接启动；之后从桌面或开始菜单再开，不会重复解压；
 3. 卸载走「设置 → 应用」或目录里的 `卸载 Bonfire.exe`，右键菜单也能卸载。
 
@@ -265,6 +265,20 @@ QQ 音乐在本项目里已经不是「检索源」，而是**能出声的真音
 这个 WebView 不能用 `backdrop-filter`（整屏加会让 fixed 浮层画不出来），所以毛玻璃只能是「底下有光 + 上面半透明」：
 - 开启毛玻璃 / 背景透明度时，`#glassAmb` 在壁纸层之前铺一层暖色散景光斑，半透明机身叠上去才有通透感；用户设了图片/视频壁纸时，壁纸会盖住这一层。
 - 机身、顶栏、检索框、收藏/导入列表、设置页共用一组 `--winA/--deckA/--panelA/--sheetA…` 变量，由进度条统一缩放浓度。
+
+### 1.3.4：让玻璃真的跟着「后面的画面」走
+散景光斑是画出来的假背景，看不出桌面在动。真的透出后面的画面有两条路，都试过：
+
+- **Windows 亚克力**（`transparent=True` + `SetWindowCompositionAttribute` / `ACCENT_ENABLE_ACRYLICBLURBEHIND`）：接口返回 `1` 表示成功，但窗口在 Win10 22H2 + 这版 WebView2 上整片不可见，只能 `PrintWindow` 抓到内容。**已放弃**。
+- **截背屏**（现在用的）：——
+  1. `SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)` 把**这扇窗**在按快门那一瞬从屏幕截图里排除，直接从屏幕 DC `BitBlt` 抄出来的就是它背后真实的桌面 / 浏览器 / 视频画面，抄完立刻恢复 `WDA_NONE`（用户自己截图、录屏时窗口照常出现）；
+  2. `GET /bgstream?fps=120` 用 `multipart/x-mixed-replace` 把画面一帧帧推给页面，`<img class="gshot">` 直接接住；
+  3. **模糊在页面里做**：`filter: blur(<滑杆算出的 px>)` 走 GPU，不比在 Python 里跑 `PIL.GaussianBlur`（一帧就要好几毫秒）；拖滑杆立刻变糊/变清，不用等下一帧抓图；
+  4. 抓图器复用同一套 DC + 兼容位图（`_FastGrab`），比每次 `ImageGrab.grab()` 快一倍；默认 120 帧上限，机器抓屏跟不上就自然降速，不会拖着界面卡；设置 → 外观里的「画面帧率」滑杆可以自己调（24 ~ 240）。
+
+于是后面的窗口一动，玻璃里的画面就跟着动。切流时用两张 `<img>` 轮流接（新的先藏着、等解码出第一帧再顶上去），后端抓不到帧就补发上一帧，所以不会再闪一下黑；一直抓不到才退回旧的暖光散景。
+
+> 本机实测（远程桌面 / 无独显）：70 帧上下，单帧 13 ~ 20ms，玻璃里的画面跟手。
 
 ## 歌词同步：按版本对时长，跨版本等比缩放
 

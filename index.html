@@ -662,7 +662,7 @@ body{--bgtr:1;--gbtnblur:12px;--winA:.50;--winB:.56;--winC:.62;--deckA:.12;--dec
    （这个 WebView 不能用 backdrop-filter，只能用「底下有光 + 上面半透明」做通透感；
      底光放在壁纸层之前，用户设了图片/视频背景时会被壁纸盖住，不会打架） */
 #glassAmb{
-  position:fixed;inset:0;z-index:0;pointer-events:none;display:none;
+  position:fixed;inset:0;z-index:1;pointer-events:none;display:none;
   background:
     radial-gradient(circle 120px at 18% 14%, rgba(247,185,82,.30), rgba(247,185,82,0) 70%),
     radial-gradient(circle 90px at 78% 20%, rgba(240,169,59,.22), rgba(240,169,59,0) 70%),
@@ -671,7 +671,22 @@ body{--bgtr:1;--gbtnblur:12px;--winA:.50;--winB:.56;--winC:.62;--deckA:.12;--dec
     radial-gradient(circle 200px at 52% 46%, rgba(196,124,48,.13), rgba(196,124,48,0) 76%),
     linear-gradient(160deg, rgba(26,20,9,.86) 0%, rgba(13,10,7,.72) 55%, rgba(9,8,6,.66) 100%);
 }
+/* 真背屏：60 帧画面流铺在最底层，模糊用 CSS filter（GPU）。
+   两张图轮着接流（A/B），新的那张先藏起来、等它真解码出第一帧再顶上，
+   这样切流时不会先黑一下。 */
+#glassShot,#glassShot2{
+  position:fixed;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;
+  z-index:0;pointer-events:none;display:none;opacity:0;
+  transform:scale(1.06);transform-origin:center;
+  transition:opacity .12s linear;
+}
 body[data-glass="1"] #glassAmb,body[data-bgt="1"] #glassAmb{display:block}
+body[data-glass="1"] #glassShot,body[data-bgt="1"] #glassShot,
+body[data-glass="1"] #glassShot2,body[data-bgt="1"] #glassShot2{display:block}
+/* 接上真画面时，底光那层只留一层很淡的暖色压光，别把后面的画面糊住 */
+body[data-shot="1"] #glassAmb{
+  background:linear-gradient(rgba(14,10,7,.12), rgba(9,7,5,.20));
+}
 body[data-glass="1"] .win{background:linear-gradient(180deg,rgba(27,23,18,var(--winA)) 0%,rgba(21,17,9,var(--winB)) 60%,rgba(18,16,12,var(--winC)) 100%)}
 body[data-glass="1"] .deck{background:linear-gradient(180deg,rgba(0,0,0,var(--deckA)),rgba(0,0,0,var(--deckB)))}
 body[data-glass="1"] .search input{background:rgba(15,13,11,var(--searchA))}
@@ -827,6 +842,8 @@ body[data-gbtn="1"] .favSearch{border-color:rgba(255,255,255,calc(.24 * var(--gb
 
 <!-- 玻璃底光：只在毛玻璃 / 背景透明度开启时出现，垫在机身下面，让半透明机身真的「透」出来
      （放在壁纸层之前，用户要是设了图片/视频背景，壁纸会盖住它，不会打架） -->
+<img id="glassShot" class="gshot" alt="" aria-hidden="true" onerror="typeof shotRestart==='function'&&shotRestart()">
+<img id="glassShot2" class="gshot" alt="" aria-hidden="true" onerror="typeof shotRestart==='function'&&shotRestart()">
 <div id="glassAmb" aria-hidden="true"></div>
 <!-- 背景视频 / 音频层，永远垫在最底下 -->
 <div id="bgWrap" aria-hidden="true"><video id="bgv" loop muted playsinline preload="auto"></video><audio id="bga" loop preload="auto"></audio></div>
@@ -1355,6 +1372,15 @@ body[data-gbtn="1"] .favSearch{border-color:rgba(255,255,255,calc(.24 * var(--gb
     <div class="tip2" id="bgtTip">开了以后主播放页、搜索页、收藏页、导入列表、设置页的底都会透，往右拉越透（看得到自己的背景图）。</div>
 
     <div class="setrow" style="margin-top:9px">
+      <button class="opt" id="shotFpsTag" style="min-width:96px" title="点一下回到 120 帧">画面帧率</button>
+      <div class="rangebox" id="shotFpsBox">
+        <input type="range" id="shotFpsRange" min="24" max="240" step="2" value="120">
+        <span class="rval" id="shotFpsVal">120</span>
+      </div>
+    </div>
+    <div class="tip2" id="shotFpsTip">毛玻璃底下那层实时画面每秒抓多少帧（默认 120，机器吃得消可以往右拉；拉太高抓不过来会自动降，不会卡界面）。</div>
+
+    <div class="setrow" style="margin-top:9px">
       <button class="opt" id="roundSwitch" data-on="0" style="min-width:56px">关闭</button>
       <div class="rangebox" id="roundBox">
         <input type="range" id="roundRange" min="4" max="32" step="1" value="18">
@@ -1565,6 +1591,7 @@ var el = {};
     "glassSwitch","glassTip","glassBox","glassRange","glassVal",
     "gbtnSwitch","gbtnTip","gbtnBox","gbtnRange","gbtnVal",
     "bgtSwitch","bgtTip","bgtBox","bgtRange","bgtVal",
+    "shotFpsRange","shotFpsVal","shotFpsTip",
     "favSearch","locSearch",
     "roundSwitch","roundTip","roundBox","roundRange","roundVal",
  "favCount","favTitleTxt","ballLayer","ball","ballTxt","btnBall","ballSwitch","ballTip","ballLab","optLab","snapSwitch","snapTip","keepSwitch","keepTip","ballTopSwitch","ballTopTip","hardTopSw","hardTopTip",
@@ -5774,6 +5801,79 @@ function paintBgVars(){
     var v = base[k] * tr * frost;
     st.setProperty("--" + k, String(Math.max(0.03, Math.min(1, v))));
   }
+  paintShot(g, tr);
+  if(typeof applyBg === "function") applyBg(loadBg());
+}
+/* 玻璃底：后台把「这扇窗后面的屏幕」以 60 帧推成 MJPEG 流，页面用 <img> 接住，
+   模糊交给 CSS filter（GPU 干的，能跑 60 帧）。所以后面放视频、刷网页、打游戏，
+   玻璃里都是它们的实时模糊版。 */
+var _shotLive = false, _shotRetry = null, _shotWait = null, _shotIdx = -1;
+function shotImgs(){
+  return [document.getElementById("glassShot"), document.getElementById("glassShot2")];
+}
+function shotFps(){
+  var v = parseInt(localStorage.getItem("film.shotfps.v1"), 10);
+  if(!v) v = 120;
+  return Math.max(24, Math.min(240, v));
+}
+function shotBlurPx(){
+  return state.glass
+    ? Math.max(2, Math.min(28, state.glassPx || 13)) * 0.95
+    : 4 + Math.max(5, Math.min(85, state.bgtPx || 40)) * 0.28;
+}
+/* 两张图轮着接流：新的先 opacity:0 地接上，等它真解码出第一帧（naturalWidth>0）
+   再把它顶到前面，旧的收掉。这样切流时不会闪一下黑。 */
+function shotStart(){
+  var imgs = shotImgs();
+  if(!imgs[0]) return;
+  var idx = _shotIdx === 0 ? 1 : 0, img = imgs[idx], old = imgs[1 - idx];
+  if(!img) return;
+  if(_shotRetry){ clearTimeout(_shotRetry); _shotRetry = null; }
+  if(_shotWait){ clearInterval(_shotWait); _shotWait = null; }
+  _shotLive = true;
+  img.style.opacity = "0";
+  img.style.filter = "blur(" + shotBlurPx().toFixed(1) + "px)";
+  img.src = "/bgstream?fps=" + shotFps() + "&q=62&t=" + Date.now();
+  var t0 = Date.now();
+  _shotWait = setInterval(function(){
+    if(!_shotLive){ clearInterval(_shotWait); _shotWait = null; return; }
+    if(img.naturalWidth > 0){
+      clearInterval(_shotWait); _shotWait = null;
+      img.style.opacity = "1";
+      if(old) old.style.opacity = "0";
+      _shotIdx = idx;
+      document.body.setAttribute("data-shot", "1");
+    }else if(Date.now() - t0 > 3000){
+      clearInterval(_shotWait); _shotWait = null;
+      shotRestart();
+    }
+  }, 50);
+}
+function shotKill(){
+  if(_shotRetry){ clearTimeout(_shotRetry); _shotRetry = null; }
+  if(_shotWait){ clearInterval(_shotWait); _shotWait = null; }
+  _shotLive = false;
+  _shotIdx = -1;
+  shotImgs().forEach(function(im){ if(im){ im.removeAttribute("src"); im.style.opacity = "0"; } });
+  document.body.removeAttribute("data-shot");
+}
+function paintShot(g, tr){
+  var imgs = shotImgs();
+  if(!imgs[0]) return;
+  var b = "blur(" + shotBlurPx().toFixed(1) + "px)";
+  imgs.forEach(function(im){ if(im) im.style.filter = b; });
+  if(g || state.bgt){
+    if(!_shotLive) shotStart();
+  }else if(_shotLive || document.body.getAttribute("data-shot")){
+    shotKill();
+  }
+}
+function shotRestart(){
+  if(!_shotLive) return;
+  _shotLive = false;
+  if(_shotWait){ clearInterval(_shotWait); _shotWait = null; }
+  if(_shotRetry) clearTimeout(_shotRetry);
+  _shotRetry = setTimeout(function(){ _shotRetry = null; if(state.glass || state.bgt) shotStart(); }, 250);
 }
 function paintGlass(){
   var on = !!state.glass;
@@ -5916,6 +6016,23 @@ if(el.bgtRange){
     try{ localStorage.setItem("film.bgtpx.v1", String(state.bgtPx)); }catch(e){}
   });
 }
+function paintShotFps(){
+  var v = shotFps();
+  if(el.shotFpsRange) el.shotFpsRange.value = String(v);
+  if(el.shotFpsVal) el.shotFpsVal.textContent = String(v);
+  if(el.shotFpsTip) el.shotFpsTip.textContent =
+    "毛玻璃底下那层实时画面每秒抓 " + v + " 帧（默认 120，机器吃得消可以往右拉；拉太高抓不过来会自动降，不会卡界面）。";
+}
+function setShotFps(v, quiet){
+  v = Math.max(24, Math.min(240, Math.round((parseInt(v, 10) || 120) / 2) * 2 || 120));
+  try{ localStorage.setItem("film.shotfps.v1", String(v)); }catch(e){}
+  paintShotFps();
+  if(_shotLive){ shotKill(); shotStart(); }
+  if(!quiet) toast("画面帧率：" + v + " 帧");
+}
+if(el.shotFpsRange) el.shotFpsRange.addEventListener("input", function(){ setShotFps(el.shotFpsRange.value, true); });
+if(el.shotFpsTag) el.shotFpsTag.addEventListener("click", function(){ setShotFps(120); });
+paintShotFps();
 if(el.setBack) el.setBack.addEventListener("click", function(){ backToList(); });
 
 function drawerFeatureOn(){
