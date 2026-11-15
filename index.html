@@ -767,6 +767,19 @@ body[data-gbtn="1"] #btnRate{
   background-image:linear-gradient(180deg,rgba(255,255,255,min(1,calc(.95 * var(--gbtnk,1)))),rgba(255,255,255,min(1,calc(.44 * var(--gbtnk,1)))));
   -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
 }
+/* 下载图标（歌名旁那颗、列表 / 收藏每行那颗）同样不裹底盘，霜面只在图案内部 */
+body[data-gbtn="1"] #btnDl,body[data-gbtn="1"] .rdl{
+  background:none;border:0;box-shadow:none;border-radius:0;
+}
+body[data-gbtn="1"] #btnDl:hover,body[data-gbtn="1"] .rdl:hover{
+  background:none;box-shadow:none;
+}
+body[data-gbtn="1"] #btnDl svg,body[data-gbtn="1"] .rdl svg{
+  background:linear-gradient(180deg,rgba(255,255,255,min(1,calc(.98 * var(--gbtnk,1)))),rgba(255,255,255,min(1,calc(.46 * var(--gbtnk,1)))));
+  -webkit-mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 4.2v10' fill='none' stroke='%23fff' stroke-width='2.1' stroke-linecap='round'/><path d='M8 10.4 12 14.4 16 10.4' fill='none' stroke='%23fff' stroke-width='2.1' stroke-linecap='round'/><path d='M5.6 18.4h12.8' fill='none' stroke='%23fff' stroke-width='2.1' stroke-linecap='round'/></svg>");
+  -webkit-mask-repeat:no-repeat;-webkit-mask-position:center;-webkit-mask-size:100% 100%;
+  color:transparent;
+}
 /* 收藏 / 导入面板头部的搜索框 */
 .favSearch{
   flex:1 1 auto;min-width:0;height:20px;padding:1px 6px;margin:0 2px 0 4px;
