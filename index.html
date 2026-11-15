@@ -1161,6 +1161,14 @@ body[data-glass="1"] .locPanel{background:rgba(20,17,13,.56)}
       <span class="tip2" id="lyrTip">哪一路音源放出声音，就按那一版取歌词。</span>
     </div>
 
+    <div class="setrow" style="margin-top:3px">
+      <button class="opt" id="lyrOffBack" style="min-width:60px" title="歌词比歌慢时用">提前</button>
+      <button class="opt" id="lyrOffZero" style="min-width:60px">归零</button>
+      <button class="opt" id="lyrOffFwd" style="min-width:60px" title="歌词比歌快时用">延后</button>
+      <span class="tip2" id="lyrOffVal">歌词对齐 0.0s</span>
+    </div>
+    <div class="tip2" id="lyrOffTip">歌词比歌快就点「延后」，比歌慢就点「提前」，一次 0.5 秒。</div>
+
     <div class="setlab" id="locLab">本地歌曲</div>
     <div class="setrow">
       <button class="opt" id="locCopy" style="min-width:88px">导入到软件</button>
@@ -1294,6 +1302,7 @@ var BALL_KEY = "film.ballfeat.v1";
 var DL_KEY = "film.dl.v1";
 var BGM_KEY = "film.bgm.v1";
 var LYRF_KEY = "film.lyrfollow.v1";
+var LYROFF_KEY = "film.lyroff.v1";
 var DRAWER_KEY = "film.drawer.v1";
 var DL_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" '
   + 'stroke-linecap="round"><path d="M12 4.2v10"/><path d="M8 10.4 12 14.4 16 10.4"/>'
@@ -1353,7 +1362,7 @@ var el = {};
     "optIsoSeg","sysStat","ifeoExe","btnIfeo","btnIfeoClear","ifeoStat",
     "devSel","devStat","btnDevRead","btnDevRestore","btnElev","optMsiSeg","optDevPrioSeg","optDevAffSeg",
     "accStat","optAccSeg","gameStat","btnGameScan","btnGameClean","rtssStat","rtssFps","btnRtss",
-    "btnRtssOff","btnRtssGet","lyrLab","lyrSwitch","lyrTip","locLab","locCopy","locLink","locTip","locClear",
+    "btnRtssOff","btnRtssGet","lyrLab","lyrSwitch","lyrTip","lyrOffBack","lyrOffZero","lyrOffFwd","lyrOffVal","lyrOffTip","locLab","locCopy","locLink","locTip","locClear",
  "locCount","locPanel","locClose","locList","locPanelCount",
  "drawerSwitch","drawerTip","autoBootSw","autoBootTip"].forEach(function(k){ el[k] = document.getElementById(k); });
 
@@ -2923,6 +2932,40 @@ function setLyrFollow(on){
   toast(on ? "歌词：跟随实际音源" : "歌词：按列表歌名");
 }
 
+/* ================= 歌词对齐微调 ================= */
+function paintLyrOff(){
+  var v = state.lyrOff || 0;
+  if(el.lyrOffVal) el.lyrOffVal.textContent = "歌词对齐 " + (v > 0 ? "+" : "") + v.toFixed(1) + "s";
+  if(el.lyrOffZero){
+    el.lyrOffZero.classList.toggle("on", Math.abs(v) < 0.01);
+    el.lyrOffZero.setAttribute("data-on", Math.abs(v) < 0.01 ? "1" : "0");
+  }
+}
+function loadLyrOff(){
+  try{
+    var v = parseFloat(localStorage.getItem(LYROFF_KEY));
+    state.lyrOff = (isFinite(v) ? v : 0);
+  }catch(e){ state.lyrOff = 0; }
+  if(Math.abs(state.lyrOff) > 5) state.lyrOff = 0;
+  paintLyrOff();
+}
+function setLyrOff(v){
+  v = Math.max(-5, Math.min(5, Math.round(v * 10) / 10));
+  state.lyrOff = v;
+  try{ localStorage.setItem(LYROFF_KEY, String(v)); }catch(e){}
+  paintLyrOff();
+  /* 立刻按新偏移重画，不用等下一拍 */
+  state.lrcIdx = -2;
+  paintLyric(audio.currentTime || 0);
+  if(el.lyrList && el.lyrList.children && state.lrcLines && state.lrcLines.length) renderLyr();
+}
+function nudgeLyrOff(d){
+  setLyrOff((state.lyrOff || 0) + d);
+  var v = state.lyrOff || 0;
+  toast("歌词对齐 " + (v > 0 ? "+" : "") + v.toFixed(1) + "s" +
+        (v > 0 ? "（歌词往后挪，变慢）" : v < 0 ? "（歌词往前挪，变快）" : ""));
+}
+
 /* ================= 本地导入 ================= */
 state.local = [];
 state.localOpen = false;
@@ -3089,6 +3132,10 @@ function playLocal(r){
 if(el.locPanel){ el.locPanel.addEventListener("click", function(e){ if(e.target === el.locPanel) closeLoc(); }); }
 
 loadLyrFollow();
+loadLyrOff();
+if(el.lyrOffBack) el.lyrOffBack.addEventListener("click", function(){ nudgeLyrOff(-0.5); });
+if(el.lyrOffFwd) el.lyrOffFwd.addEventListener("click", function(){ nudgeLyrOff(0.5); });
+if(el.lyrOffZero) el.lyrOffZero.addEventListener("click", function(){ setLyrOff(0); toast("歌词对齐归零"); });
 localFetch();
 setTimeout(function(){
   if(typeof pullAutoBoot === "function") pullAutoBoot();
@@ -3689,6 +3736,10 @@ audio.addEventListener("timeupdate", function(){
   el.bar.setAttribute("aria-valuenow", Math.round(p*100));
   paintLyric(audio.currentTime);
 });
+audio.addEventListener("seeked", function(){
+  /* 拖动进度条、点歌词跳句之后立刻对齐，别等下一拍 timeupdate */
+  paintLyric(audio.currentTime || 0);
+});
 audio.addEventListener("loadedmetadata", function(){
   var r = state.rows[state.idx];
   state.durRow = r;
@@ -3796,15 +3847,29 @@ document.addEventListener("click", function(e){
 var lrcTimer = null;
 function parseLrc(text){
   var out = [], re = /\[(\d+):(\d+)(?:[.:](\d+))?\]([^\r\n]*)/g, m;
+  var offMs = 0, hasOff = false;
   String(text || "").split(/\r?\n/).forEach(function(line){
+    var om = line.match(/^\s*\[offset:\s*([+-]?\d+)\s*\]/i);
+    if(om && !hasOff){ offMs = parseInt(om[1], 10) || 0; hasOff = true; }
     re.lastIndex = 0;
     while((m = re.exec(line))){
       var s = (m[4] || "").trim();
       if(!s) continue;
-      var f = m[3] ? (m[3].length === 2 ? parseInt(m[3], 10) / 100 : parseInt(m[3], 10) / 1000) : 0;
+      var f = 0;
+      if(m[3]){
+        var fs = m[3];
+        if(fs.length === 1) f = parseInt(fs, 10) / 10;
+        else if(fs.length === 2) f = parseInt(fs, 10) / 100;
+        else f = parseInt(fs.slice(0, 3), 10) / 1000;
+      }
       out.push({ t: parseInt(m[1], 10) * 60 + parseInt(m[2], 10) + f, s: s });
     }
   });
+  /* LRC 的 [offset:+ms] 表示整条轴往后挪，负数是提前 */
+  if(offMs){
+    var sec = offMs / 1000;
+    out.forEach(function(o){ o.t = Math.max(0, o.t + sec); });
+  }
   out.sort(function(a, b){ return a.t - b.t; });
   return out;
 }
@@ -3820,8 +3885,10 @@ function clearLyric(){
 function paintLyric(cur){
   var A = state.lrcLines;
   if(!A || !A.length) return;
+  /* 0.12s 提前量以前是让换句显得利索，但叠上版本差异就成了「歌词比歌快」，去掉 */
+  cur = cur + (state.lyrOff || 0);
   var i = -1;
-  for(var k = 0; k < A.length; k++){ if(A[k].t <= cur + 0.12) i = k; else break; }
+  for(var k = 0; k < A.length; k++){ if(A[k].t <= cur) i = k; else break; }
   if(i === state.lrcIdx && i >= 0) return;
   if(i === state.lrcIdx && i < 0 && A.length && el.ly2.textContent === (A[0] ? A[0].s : "")) return;
   state.lrcIdx = i;
@@ -3853,13 +3920,23 @@ function fitLrc(){
     paintLyric(audio.currentTime || 0);
     return;
   }
-  if(anchor > 20 && Math.abs(anchor - ad) > 6){
+  /* 歌词是按哪一版做的、真正放的是哪一版，长度差一点点也照样换算：
+     以前差 6 秒以内不算，结果一首 4 分钟的歌到结尾能快出好几秒 */
+  var near = true;
+  if(anchor > 20 && Math.abs(anchor - ad) > 1.2){
     ratio = ad / anchor;
-  }else if(!anchor && lastT > 20 && Math.abs((lastT + 2) - ad) > Math.max(12, ad * 0.08)){
+    near = Math.abs(anchor - ad) <= 12;
+  }else if(!anchor && lastT > 20 && Math.abs((lastT + 2) - ad) > Math.max(6, ad * 0.04)){
     ratio = ad / (lastT + 2);
+    near = false;
   }
-  if(ratio < 0.45 || ratio > 2.2) ratio = 1;
-  if(Math.abs(ratio - 1) < 0.02){
+  /* 长度差得不多时只允许小幅换算，差很多（DJ 版 / 别的版本）才放开 */
+  if(near){
+    if(ratio < 0.7 || ratio > 1.45) ratio = 1;
+  }else{
+    if(ratio < 0.45 || ratio > 2.2) ratio = 1;
+  }
+  if(Math.abs(ratio - 1) < 0.005){
     state.lrcLines = base.slice();
     state.lrcTotal = lastT;
   }else{
@@ -3957,7 +4034,7 @@ function applyLrcSeek(){
     if(isFinite(audio.duration) && audio.duration > 0 && tt > audio.duration - 0.8){
       tt = Math.max(0, audio.duration - 1.4);
     }
-    audio.currentTime = Math.max(0, tt + 0.05);
+    audio.currentTime = Math.max(0, tt - (state.lyrOff || 0) + 0.05);
   }catch(e){}
 }
 if(el.lyricBox){
