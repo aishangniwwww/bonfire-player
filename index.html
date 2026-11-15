@@ -784,8 +784,8 @@ body[data-gbtn="1"] .icobtn,body[data-gbtn="1"] .sbt,body[data-gbtn="1"] .tabite
 body[data-gbtn="1"] .clr,body[data-gbtn="1"] .bgrow label,body[data-gbtn="1"] .sw,
 body[data-gbtn="1"] .favSearch,body[data-gbtn="1"] .rate,body[data-gbtn="1"] .seek,
 body[data-gbtn="1"] .pill,body[data-gbtn="1"] .lnk{border-radius:999px}
-/* 打成胶囊以后同样的内边距会显得发胖，左右各收 2px（只收一点，别把字挤着小一号） */
-body[data-gbtn="1"] .opt{padding-left:7px;padding-right:7px}
+/* 打成胶囊以后同样的内边距会显得发胖，左右各收 2px、上下各收 1px（只收一点，别把字挤小） */
+body[data-gbtn="1"] .opt{padding:4px 7px;min-height:26px}
 /* 主播放页控制键：上一首 / 下一首 / 收藏 / 声音 / 播放模式 / 倍速
    不裹圆形底盘（收藏就只画五角星），霜面只落在图案内部：用图案自身做遮罩，
    svg 的笔画颜色置透明，让遮罩里的霜面成为图案本身。 */
