@@ -1,0 +1,28 @@
+# 打包产物
+dist/
+_build/
+_build_py/
+*.spec
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 本地调试脚本 / 截图
+_*.py
+_*.png
+_*.json
+_ref/
+*.log
+_*
+
+# 系统
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# 编辑器
+.vscode/
+.idea/
