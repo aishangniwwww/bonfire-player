@@ -382,14 +382,6 @@ body{
 body[data-glass="1"]{--gsat:1.14}
 body[data-glass="2"]{--gblur:13px;--gsat:1.14}
 body[data-glass="3"]{--gblur:22px;--gsat:1.24}
-body[data-glass="1"] #setSheet,body[data-glass="2"] #setSheet,body[data-glass="3"] #setSheet,
-body[data-glass="1"] .listwrap,body[data-glass="2"] .listwrap,body[data-glass="3"] .listwrap,
-body[data-glass="1"] .lyrwrap,body[data-glass="2"] .lyrwrap,body[data-glass="3"] .lyrwrap,
-body[data-glass="1"] .optwrap,body[data-glass="2"] .optwrap,body[data-glass="3"] .optwrap,
-body[data-glass="1"] .favPanel,body[data-glass="2"] .favPanel,body[data-glass="3"] .favPanel{
-  -webkit-backdrop-filter:blur(var(--gblur)) saturate(var(--gsat));
-  backdrop-filter:blur(var(--gblur)) saturate(var(--gsat));
-}
 body[data-round="1"] .win{border-radius:var(--rpx)}
 body[data-round="1"] .sheet{border-radius:inherit}
 body[data-round="1"] .win,body[data-round="1"] #setSheet{box-shadow:none}
@@ -658,26 +650,94 @@ body[data-glass="1"] .rateMenu{background:rgba(11,9,7,.66)}
 body[data-glass="1"] .toast{background:rgba(11,9,7,.68)}
 body[data-glass="1"] .cfmcard{background:rgba(26,20,13,.76)}
 body[data-glass="1"] .cfmbox{background:rgba(6,5,4,.52)}
-body[data-glass="1"] .win,body[data-glass="1"] .deck,body[data-glass="1"] .search input,
-body[data-glass="1"] .tabdrawer,body[data-glass="1"] .favPanel,body[data-glass="1"] .helpSheet,
-body[data-glass="1"] .langSheet,body[data-glass="1"] .optwrap,body[data-glass="1"] .rateMenu,
-body[data-glass="1"] .toast,body[data-glass="1"] .cfmcard,body[data-glass="1"] .cfmbox,
-body[data-glass="1"] #setSheet,body[data-glass="1"] .listwrap,body[data-glass="1"] .lyrwrap{
-  -webkit-backdrop-filter:blur(var(--gblur)) saturate(var(--gsat));
-  backdrop-filter:blur(var(--gblur)) saturate(var(--gsat));
-}
-body[data-glass="1"] .deck,body[data-glass="1"] .search input{
-  -webkit-backdrop-filter:blur(calc(var(--gblur) * .7)) saturate(var(--gsat));
-  backdrop-filter:blur(calc(var(--gblur) * .7)) saturate(var(--gsat));
-}
-/* 导入歌曲列表 / 设置分类页 / 其它浮层，全部一起透 */
-body[data-glass="1"] .locPanel,body[data-glass="1"] .locPanel .locList,
-body[data-glass="1"] .tabpage,body[data-glass="1"] .setwrap,
-body[data-glass="1"] .lyrlist,body[data-glass="1"] .favList{
-  -webkit-backdrop-filter:blur(var(--gblur)) saturate(var(--gsat));
-  backdrop-filter:blur(var(--gblur)) saturate(var(--gsat));
-}
+/* 这个 WebView 里 backdrop-filter / 整屏 filter、以及给 .win 加 z-index，
+   都会让浮层内容（设置页、面板文字）整片画不出来，所以毛玻璃用「半透明层 + 顶部亮边」做质感，
+   不再叠真模糊；模糊强度滑条改为调节这层霜面的浓度。 */
+/* （旧的 .win backdrop-filter 与 #bgArt 整屏模糊层已移除） */
 body[data-glass="1"] .locPanel{background:rgba(20,17,13,.56)}
+
+/* ===== 毛玻璃铺满：主播放页 / 搜索页 / 收藏页 / 导入-下载列表 / 设置页；并接入背景透明度 ===== */
+body{--bgtr:1;--gbtnblur:12px;--winA:.70;--winB:.74;--winC:.78;--deckA:.34;--deckB:.14;--sheetA:.88;--panelA:.74;--tabA:.82;--listA:.32;--searchA:.62;--wrapA:.86}
+body[data-glass="1"] .win{background:linear-gradient(180deg,rgba(27,23,18,var(--winA)) 0%,rgba(21,17,9,var(--winB)) 60%,rgba(18,16,12,var(--winC)) 100%)}
+body[data-glass="1"] .deck{background:linear-gradient(180deg,rgba(0,0,0,var(--deckA)),rgba(0,0,0,var(--deckB)))}
+body[data-glass="1"] .search input{background:rgba(15,13,11,var(--searchA))}
+body[data-glass="1"] .favPanel{background:rgba(20,17,13,var(--panelA))}
+body[data-glass="1"] .locPanel{background:rgba(20,17,13,var(--panelA))}
+body[data-glass="1"] .covPanel{background:rgba(20,17,13,var(--panelA))}
+body[data-glass="1"] .tabdrawer{background:rgba(20,17,13,var(--tabA))}
+body[data-glass="1"] #setSheet{background:rgba(21,18,14,var(--sheetA))}
+body[data-glass="1"] .helpSheet{background:rgba(22,17,11,var(--wrapA))}
+body[data-glass="1"] .langSheet{background:rgba(22,17,11,var(--wrapA))}
+body[data-glass="1"] .optwrap{background:rgba(22,17,11,var(--wrapA))}
+body[data-glass="1"] .toast{background:rgba(11,9,7,var(--panelA))}
+body[data-glass="1"] .cfmcard{background:rgba(26,20,13,var(--wrapA))}
+body[data-glass="1"] .cfmbox{background:rgba(6,5,4,var(--listA))}
+body[data-glass="1"] .listwrap,body[data-glass="1"] .lyrwrap{background:rgba(17,14,10,var(--listA))}
+/* 一层薄亮边，让这些面看起来是「玻璃」，而不是纯色半透明 */
+body[data-glass="1"] .deck,
+body[data-glass="1"] .search input,
+body[data-glass="1"] .favPanel,
+body[data-glass="1"] .locPanel,
+body[data-glass="1"] .covPanel,
+body[data-glass="1"] .tabdrawer,
+body[data-glass="1"] #setSheet,
+body[data-glass="1"] .helpSheet,
+body[data-glass="1"] .langSheet,
+body[data-glass="1"] .optwrap,
+body[data-glass="1"] .toast,
+body[data-glass="1"] .cfmcard,
+body[data-glass="1"] .listwrap,
+body[data-glass="1"] .lyrwrap{
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.10);
+}
+/* 只开「背景透明度」、没开毛玻璃时，同样按透明度缩放底色（不做模糊） */
+body[data-bgt="1"]:not([data-glass="1"]) .win{background:linear-gradient(180deg,rgba(27,23,18,var(--winA)) 0%,rgba(21,17,9,var(--winB)) 60%,rgba(18,16,12,var(--winC)) 100%)}
+body[data-bgt="1"]:not([data-glass="1"]) .deck{background:linear-gradient(180deg,rgba(0,0,0,var(--deckA)),rgba(0,0,0,var(--deckB)))}
+body[data-bgt="1"]:not([data-glass="1"]) .search input{background:rgba(15,13,11,var(--searchA))}
+body[data-bgt="1"]:not([data-glass="1"]) .favPanel,
+body[data-bgt="1"]:not([data-glass="1"]) .locPanel,
+body[data-bgt="1"]:not([data-glass="1"]) .covPanel{background:rgba(20,17,13,var(--panelA))}
+body[data-bgt="1"]:not([data-glass="1"]) .tabdrawer{background:rgba(20,17,13,var(--tabA))}
+body[data-bgt="1"]:not([data-glass="1"]) .sheet{background:rgba(21,18,14,var(--sheetA))}
+body[data-bgt="1"]:not([data-glass="1"]) .helpSheet,
+body[data-bgt="1"]:not([data-glass="1"]) .langSheet,
+body[data-bgt="1"]:not([data-glass="1"]) .optwrap{background:rgba(22,17,11,var(--wrapA))}
+body[data-bgt="1"]:not([data-glass="1"]) .listwrap,
+body[data-bgt="1"]:not([data-glass="1"]) .lyrwrap{background:rgba(17,14,10,var(--listA))}
+/* 毛玻璃化按钮：iPhone 下拉菜单那种磨砂块（同一原因不叠真模糊，用半透明白 + 内侧高光 + 描边） */
+body[data-gbtn="1"] button,body[data-gbtn="1"] .opt,body[data-gbtn="1"] .dkbtn,
+body[data-gbtn="1"] .icobtn,body[data-gbtn="1"] .sbt,body[data-gbtn="1"] .tabitem,
+body[data-gbtn="1"] .clr,body[data-gbtn="1"] .bgrow label,body[data-gbtn="1"] .sw{
+  background:linear-gradient(180deg,rgba(255,255,255,calc(.16 * var(--gbtnk,1))),rgba(255,255,255,calc(.05 * var(--gbtnk,1))));
+  border:1px solid rgba(255,255,255,calc(.24 * var(--gbtnk,1)));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.20),0 1px 2px rgba(0,0,0,.30);
+}
+body[data-gbtn="1"] button:hover,body[data-gbtn="1"] .opt:hover,body[data-gbtn="1"] .dkbtn:hover,
+body[data-gbtn="1"] .icobtn:hover,body[data-gbtn="1"] .sbt:hover,
+body[data-gbtn="1"] .clr:hover,body[data-gbtn="1"] .bgrow label:hover{
+  background:rgba(255,255,255,.16);
+}
+body[data-gbtn="1"] .sbt.on,body[data-gbtn="1"] .opt.on,body[data-gbtn="1"] .opt[data-on="1"]{
+  background:rgba(240,169,59,.26);border-color:rgba(240,169,59,.55);color:var(--amber);
+}
+body[data-gbtn="1"] .play{
+  background:rgba(240,169,59,.34);border:1px solid rgba(255,208,125,.52);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.34),0 6px 16px -6px rgba(240,169,59,.62);
+}
+body[data-gbtn="1"] .play:hover{background:rgba(247,185,82,.5)}
+body[data-gbtn="1"] .icobtn.pinned{background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.5)}
+/* 收藏 / 导入面板头部的搜索框 */
+.favSearch{
+  flex:1 1 auto;min-width:0;height:20px;padding:1px 6px;margin:0 2px 0 4px;
+  background:rgba(233,222,197,.06);border:1px solid rgba(233,222,197,.18);border-radius:10px;
+  color:var(--film);font-family:var(--ui);font-size:10.5px;outline:none;transition:border-color .18s,background .18s;
+}
+.favHead b,#favTitleTxt,#locTitleTxt{white-space:nowrap;flex:0 0 auto}
+.favSearch::placeholder{color:#6A5E4F;font-size:10px}
+.favSearch:focus{border-color:rgba(240,169,59,.55);background:rgba(240,169,59,.08)}
+body[data-glass="1"] .favSearch{background:rgba(15,13,11,var(--searchA))}
+body[data-gbtn="1"] .favSearch{background:rgba(255,255,255,calc(.13 * var(--gbtnk,1)))}
+body[data-gbtn="1"] .favSearch{border-color:rgba(255,255,255,calc(.24 * var(--gbtnk,1)))}
 </style>
 
 <style id="aboutFeedbackCss">
@@ -1046,6 +1106,7 @@ body[data-glass="1"] .locPanel{background:rgba(20,17,13,.56)}
   <aside class="favPanel" id="favPanel" aria-hidden="true">
     <div class="favHead">
       <b id="favTitleTxt" role="button" tabindex="0" title="点一下切到我的导入">我的收藏</b>
+      <input class="favSearch" id="favSearch" type="search" placeholder="搜收藏" autocomplete="off" spellcheck="false" aria-label="搜索我的收藏">
       <span class="grow"></span>
       <span class="n" id="favCount"></span>
       <button class="dkbtn" id="favClose" title="关闭收藏">×</button>
@@ -1057,6 +1118,7 @@ body[data-glass="1"] .locPanel{background:rgba(20,17,13,.56)}
   <aside class="locPanel" id="locPanel" aria-hidden="true">
     <div class="favHead">
       <b id="locTitleTxt" role="button" tabindex="0" title="点一下切回我的收藏">我的导入</b>
+      <input class="favSearch" id="locSearch" type="search" placeholder="搜导入" autocomplete="off" spellcheck="false" aria-label="搜索我的导入">
       <span class="grow"></span>
       <span class="n" id="locPanelCount"></span>
       <button class="dkbtn" id="locClose" title="返回收藏">×</button>
@@ -1201,7 +1263,25 @@ body[data-glass="1"] .locPanel{background:rgba(20,17,13,.56)}
         <span class="rval" id="glassVal">13</span>
       </div>
     </div>
-    <div class="tip2" id="glassTip">毛液态玻璃：设置、列表、歌词页与收藏面板都会透出背景，往右拉雾得更重。</div>
+    <div class="tip2" id="glassTip">毛液态玻璃：主播放页、搜索页、收藏页、导入列表、设置页都会透出背景，往右拉雾得更重。</div>
+
+    <div class="setrow" style="margin-top:9px">
+      <button class="opt" id="gbtnSwitch" data-on="0" style="min-width:96px">毛玻璃化按钮</button>
+      <div class="rangebox" id="gbtnBox">
+        <input type="range" id="gbtnRange" min="2" max="28" step="1" value="12">
+        <span class="rval" id="gbtnVal">12</span>
+      </div>
+    </div>
+    <div class="tip2" id="gbtnTip">点了以后所有按钮都变成 iPhone 下拉菜单那种磨砂玻璃块，往右拉磨得更重。</div>
+
+    <div class="setrow" style="margin-top:9px">
+      <button class="opt" id="bgtSwitch" data-on="0" style="min-width:96px">背景透明度</button>
+      <div class="rangebox" id="bgtBox">
+        <input type="range" id="bgtRange" min="5" max="85" step="1" value="40">
+        <span class="rval" id="bgtVal">40</span>
+      </div>
+    </div>
+    <div class="tip2" id="bgtTip">开了以后主播放页、搜索页、收藏页、导入列表、设置页的底都会透，往右拉越透（看得到自己的背景图）。</div>
 
     <div class="setrow" style="margin-top:9px">
       <button class="opt" id="roundSwitch" data-on="0" style="min-width:56px">关闭</button>
@@ -1395,7 +1475,8 @@ var state = {
   pref: "auto", lang: "zh", volOpen: false,
   view: "main", mode: "order", lrcLines: [], lrcIdx: -1,
   fav: [], favOpen: false, ball: false, ballFeat: false, srcNote: "", dlOn: false, lySeek: false,
-  glass: 1, glassPx: 13, round: 0, roundPx: 18
+  glass: 1, glassPx: 13, round: 0, roundPx: 18, gbtn: 0, gbtnPx: 12, bgt: 0, bgtPx: 40,
+  favQ: "", locQ: ""
 };
 
 var el = {};
@@ -1411,6 +1492,9 @@ var el = {};
     "cbgSwitch","cbgTip","multiSwitch","multiTip",
     "setWrap","setBack","tabList","tabDrawer","tabHint","swipeHint",
     "glassSwitch","glassTip","glassBox","glassRange","glassVal",
+    "gbtnSwitch","gbtnTip","gbtnBox","gbtnRange","gbtnVal",
+    "bgtSwitch","bgtTip","bgtBox","bgtRange","bgtVal",
+    "favSearch","locSearch",
     "roundSwitch","roundTip","roundBox","roundRange","roundVal",
  "favCount","favTitleTxt","ballLayer","ball","ballTxt","btnBall","ballSwitch","ballTip","ballLab","optLab","snapSwitch","snapTip","keepSwitch","keepTip","ballTopSwitch","ballTopTip","hardTopSw","hardTopTip",
  "langHub","langNow","langSheet","langGrid","langClose","langTitleTxt","langTipTxt","langTipSet",
@@ -2912,16 +2996,24 @@ function autoStartNextFav(badIdx){
     return;
   }
 }
+function favHit(f, q){
+  if(!q) return true;
+  var t = ((f.name || "") + " " + (f.artist || "")).toLowerCase();
+  return t.indexOf(q) > -1;
+}
 function renderFavList(){
   if(!el.favList) return;
   var n = state.fav.length;
+  var q = (state.favQ || "").trim().toLowerCase();
   if(el.favCount) el.favCount.textContent = n ? (n + " 首") : "";
   if(!n){
     el.favList.innerHTML = '<div class="empty-row">' + esc(L("favEmpty")) + '</div>';
     return;
   }
-  var h = "";
+  var h = "", hit = 0;
   state.fav.forEach(function(f, i){
+    if(!favHit(f, q)) return;
+    hit++;
     h += '<div class="row" data-f="' + i + '">'
       + '<span class="cov">' + coverHtml(f) + '</span>'
       + '<div class="txt"><div class="nm">' + esc(f.name) + '</div>'
@@ -2931,6 +3023,7 @@ function renderFavList(){
       + '<span class="rstar on" data-unfav="' + i + '" role="button" aria-label="取消收藏">★</span>'
       + '</div>';
   });
+  if(!hit) h = '<div class="empty-row">没找到「' + esc(state.favQ) + '」，换个词试试。</div>';
   el.favList.innerHTML = h;
 }
 function playFav(i){
@@ -2959,6 +3052,7 @@ function playFav(i){
 }
 function openFav(){
   state.favOpen = true;
+  if(el.favSearch) el.favSearch.value = state.favQ || "";
   renderFavList();
   el.favPanel.classList.add("show");
   el.favMask.classList.add("show");
@@ -3091,12 +3185,15 @@ function fmtSize(n){
 function renderLocList(){
   if(!el.locList) return;
   var rows = state.local || [];
+  var q = (state.locQ || "").trim().toLowerCase();
   if(!rows.length){
     el.locList.innerHTML = '<div class="empty-row">还没有导入歌曲，去设置里点「导入到软件」或「导入为链接」。</div>';
     return;
   }
-  var h = "";
+  var h = "", hit = 0;
   rows.forEach(function(r, i){
+    if(q && (r.name || "").toLowerCase().indexOf(q) < 0) return;
+    hit++;
     h += '<div class="row" data-l="' + i + '">'
       + '<span class="cov">' + (r.cover ? '<img src="' + esc(r.cover) + '" alt="">' : "♪") + '</span>'
       + '<div class="txt"><div class="nm">' + esc(r.name || "未命名") + '</div>'
@@ -3105,7 +3202,27 @@ function renderLocList(){
       + '<span class="rstar on" data-ldel="' + i + '" role="button" aria-label="移除">×</span>'
       + '</div>';
   });
+  if(!hit) h = '<div class="empty-row">导入列表里没找到「' + esc(state.locQ) + '」，换个词试试。</div>';
   el.locList.innerHTML = h;
+}
+/* 收藏 / 导入面板的搜索框：输入即筛，标题旁边就贴着 */
+if(el.favSearch){
+  el.favSearch.addEventListener("input", function(){
+    state.favQ = el.favSearch.value || "";
+    renderFavList();
+  });
+  el.favSearch.addEventListener("keydown", function(e){
+    if(e.key === "Enter"){ e.preventDefault(); el.favSearch.blur(); }
+  });
+}
+if(el.locSearch){
+  el.locSearch.addEventListener("input", function(){
+    state.locQ = el.locSearch.value || "";
+    renderLocList();
+  });
+  el.locSearch.addEventListener("keydown", function(e){
+    if(e.key === "Enter"){ e.preventDefault(); el.locSearch.blur(); }
+  });
 }
 function localRowOf(r){
   return { name: r.name, artist: "本地歌曲", dur: 0, local: true, lid: r.id, cover: r.cover || "",
@@ -3270,6 +3387,7 @@ function importLocal(mode, folder){
 function openLoc(){
   if(state.localOpen) return;
   state.localOpen = true;
+  if(el.locSearch) el.locSearch.value = state.locQ || "";
   localFetch();
   el.locPanel.classList.add("show");
   el.locPanel.setAttribute("aria-hidden", "false");
@@ -5571,12 +5689,28 @@ if(el.roundRange){
 }
 
 /* 毛玻璃（开关 + 右边进度条，越往右越糊） */
+function paintBgVars(){
+  var g = !!state.glass;
+  var tr = state.bgt ? Math.max(0.15, 1 - Math.max(5, Math.min(85, state.bgtPx || 40)) / 100) : 1;
+  var frost = g ? Math.min(1.5, 0.55 + Math.max(2, Math.min(28, state.glassPx || 13)) / 26) : 1;
+  var base = g
+    ? { winA:.70, winB:.74, winC:.78, deckA:.34, deckB:.14, sheetA:.88, panelA:.74,
+        tabA:.82, listA:.32, searchA:.62, wrapA:.86 }
+    : { winA:1, winB:1, winC:1, deckA:.42, deckB:.18, sheetA:1, panelA:1,
+        tabA:.96, listA:.26, searchA:1, wrapA:1 };
+  var st = document.body.style;
+  for(var k in base){
+    var v = base[k] * tr * frost;
+    st.setProperty("--" + k, String(Math.max(0.03, Math.min(1, v))));
+  }
+}
 function paintGlass(){
   var on = !!state.glass;
   var px = on ? Math.max(2, Math.min(28, state.glassPx || 13)) : 0;
   document.body.setAttribute("data-glass", on ? "1" : "0");
   document.body.style.setProperty("--gblur", px + "px");
   document.body.style.setProperty("--gsat", String(1 + px / 100));
+  paintBgVars();
   if(el.glassSwitch){
     el.glassSwitch.textContent = on ? "开启" : "关闭";
     el.glassSwitch.classList.toggle("on", on);
@@ -5586,7 +5720,7 @@ function paintGlass(){
   if(el.glassVal) el.glassVal.textContent = on ? String(px) : "";
   if(el.glassTip){
     el.glassTip.textContent = on
-      ? ("毛液态玻璃：" + px + " px 模糊，设置 / 列表 / 歌词 / 收藏都会透出背景。")
+      ? ("毛液态玻璃：" + px + " px 模糊，主播放页 / 搜索页 / 收藏页 / 导入列表 / 设置页都会透出背景。")
       : "毛液态玻璃已关，改回纯实心底。";
   }
 }
@@ -5614,6 +5748,101 @@ if(el.glassRange){
     state.glass = 1;
     paintGlass();
     try{ localStorage.setItem("film.glasspx.v1", String(state.glassPx)); }catch(e){}
+  });
+}
+/* 毛玻璃化按钮（旁边进度条调按钮的模糊量） */
+function paintGbtn(){
+  var on = !!state.gbtn;
+  var px = Math.max(2, Math.min(28, state.gbtnPx || 12));
+  document.body.setAttribute("data-gbtn", on ? "1" : "0");
+  document.body.style.setProperty("--gbtnblur", (on ? px : 0) + "px");
+  document.body.style.setProperty("--gbtnk", String(on ? Math.min(1.6, 0.45 + px / 28) : 1));
+  if(el.gbtnSwitch){
+    el.gbtnSwitch.textContent = on ? "开启" : "关闭";
+    el.gbtnSwitch.classList.toggle("on", on);
+    el.gbtnSwitch.setAttribute("data-on", on ? "1" : "0");
+  }
+  if(el.gbtnBox) el.gbtnBox.classList.toggle("on", on);
+  if(el.gbtnRange && on) el.gbtnRange.value = String(px);
+  if(el.gbtnVal) el.gbtnVal.textContent = on ? String(px) : "";
+  if(el.gbtnTip){
+    el.gbtnTip.textContent = on
+      ? ("按钮已毛玻璃化：" + px + " px 磨砂，播放键、抽屉、设置里的按钮都能透出背景。")
+      : "点了以后所有按钮都变成 iPhone 下拉菜单那种磨砂玻璃块，往右拉磨得更重。";
+  }
+}
+function setGbtn(on, px){
+  state.gbtn = on ? 1 : 0;
+  if(px) state.gbtnPx = Math.max(2, Math.min(28, Math.round(px)));
+  try{
+    localStorage.setItem("film.gbtn.v1", String(state.gbtn));
+    localStorage.setItem("film.gbtnpx.v1", String(state.gbtnPx || 12));
+  }catch(e){}
+  paintGbtn();
+  toast(on ? "按钮毛玻璃：开启" : "按钮毛玻璃：关闭，按钮回到原来的描边样式");
+}
+function loadGbtn(){
+  var v = null, px = null;
+  try{ v = localStorage.getItem("film.gbtn.v1"); px = localStorage.getItem("film.gbtnpx.v1"); }catch(e){}
+  state.gbtn = v === "1" ? 1 : 0;
+  state.gbtnPx = px === null ? 12 : Math.max(2, Math.min(28, parseInt(px, 10) || 12));
+  paintGbtn();
+}
+if(el.gbtnSwitch) el.gbtnSwitch.addEventListener("click", function(){ setGbtn(!state.gbtn); });
+if(el.gbtnRange){
+  el.gbtnRange.addEventListener("input", function(){
+    state.gbtnPx = parseInt(el.gbtnRange.value, 10) || 12;
+    state.gbtn = 1;
+    paintGbtn();
+    try{ localStorage.setItem("film.gbtnpx.v1", String(state.gbtnPx)); }catch(e){}
+  });
+}
+
+/* 背景透明度（页面底层按调节变透，看到自己的背景图） */
+function paintBgt(){
+  var on = !!state.bgt;
+  var pct = Math.max(5, Math.min(85, state.bgtPx || 40));
+  document.body.setAttribute("data-bgt", on ? "1" : "0");
+  document.body.style.setProperty("--bgtr", String(on ? (1 - pct / 100) : 1));
+  paintBgVars();
+  if(el.bgtSwitch){
+    el.bgtSwitch.textContent = on ? "开启" : "关闭";
+    el.bgtSwitch.classList.toggle("on", on);
+    el.bgtSwitch.setAttribute("data-on", on ? "1" : "0");
+  }
+  if(el.bgtBox) el.bgtBox.classList.toggle("on", on);
+  if(el.bgtRange && on) el.bgtRange.value = String(pct);
+  if(el.bgtVal) el.bgtVal.textContent = on ? (pct + "%") : "";
+  if(el.bgtTip){
+    el.bgtTip.textContent = on
+      ? ("背景透明度：" + pct + "% 透，四个页面都压不住了，自己的背景图露出来。往右拉越透。")
+      : "开了以后主播放页、搜索页、收藏页、导入列表、设置页的底都会透，往右拉越透（看得到自己的背景图）。";
+  }
+}
+function setBgt(on, pct){
+  state.bgt = on ? 1 : 0;
+  if(pct) state.bgtPx = Math.max(5, Math.min(85, Math.round(pct)));
+  try{
+    localStorage.setItem("film.bgt.v1", String(state.bgt));
+    localStorage.setItem("film.bgtpx.v1", String(state.bgtPx || 40));
+  }catch(e){}
+  paintBgt();
+  toast(on ? "背景透明度：开启" : "背景透明度：关闭，页面回到实心底");
+}
+function loadBgt(){
+  var v = null, px = null;
+  try{ v = localStorage.getItem("film.bgt.v1"); px = localStorage.getItem("film.bgtpx.v1"); }catch(e){}
+  state.bgt = v === "1" ? 1 : 0;
+  state.bgtPx = px === null ? 40 : Math.max(5, Math.min(85, parseInt(px, 10) || 40));
+  paintBgt();
+}
+if(el.bgtSwitch) el.bgtSwitch.addEventListener("click", function(){ setBgt(!state.bgt); });
+if(el.bgtRange){
+  el.bgtRange.addEventListener("input", function(){
+    state.bgtPx = parseInt(el.bgtRange.value, 10) || 40;
+    state.bgt = 1;
+    paintBgt();
+    try{ localStorage.setItem("film.bgtpx.v1", String(state.bgtPx)); }catch(e){}
   });
 }
 if(el.setBack) el.setBack.addEventListener("click", function(){ backToList(); });
@@ -6103,6 +6332,8 @@ function boot(){
   paintSmode();
   loadCbg();
   loadGlass();
+  loadGbtn();
+  loadBgt();
   loadRound();
   loadMulti();
   try{ st0 = localStorage.getItem(SORT_KEY); }catch(e){ st0 = null; }
