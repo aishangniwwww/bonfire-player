@@ -3216,6 +3216,7 @@ function openFav(){
   if(el.favSearch) el.favSearch.value = state.favQ || "";
   renderFavList();
   var show = function(){
+    if(!state.favOpen || state.localOpen) return;
     el.favPanel.classList.add("show");
     el.favMask.classList.add("show");
     el.favPanel.setAttribute("aria-hidden", "false");
@@ -3232,13 +3233,16 @@ function openFav(){
   toast(L("favOpen"));
 }
 function closeFav(){
-  if(!state.favOpen) return;
+  var was = !!state.favOpen;
+  /* 不管状态记的是开还是关，都把面板收干净：
+     以前 loc 的延迟回切会把面板 show 回来、状态却是关，
+     这时叉叉和遮罩都因为 !favOpen 直接 return，整块面板点不掉。 */
   state.favOpen = false;
   closeLoc();
   el.favPanel.classList.remove("show");
   el.favMask.classList.remove("show");
   el.favPanel.setAttribute("aria-hidden", "true");
-  toast(L("favClose"));
+  if(was) toast(L("favClose"));
 }
 if(el.btnFav) el.btnFav.addEventListener("click", function(){
   toggleFav(state.rows[state.idx]);
@@ -3757,7 +3761,7 @@ function closeLoc(){
   el.locPanel.setAttribute("aria-hidden", "true");
   if(locFromFav && state.favOpen){
     setTimeout(function(){
-      if(state.localOpen) return;
+      if(state.localOpen || !state.favOpen) return;
       el.favPanel.classList.add("show");
       el.favPanel.setAttribute("aria-hidden", "false");
       snapPanel(el.favPanel);
