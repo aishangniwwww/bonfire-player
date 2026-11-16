@@ -553,8 +553,10 @@ body[data-glass="3"] #setSheet{background:rgba(21,18,14,.58)}
   border:1px solid rgba(240,169,59,.28);background:rgba(240,169,59,.10);color:#E7BE85;font:inherit;
 }
 /* 文件夹那一行的图标：一个细线条的文件柜 */
-.locPanel .row.fold .cov.fold{background:none;border:1px dashed rgba(240,169,59,.36);color:#E7BE85;font-size:12px}
+.locPanel .row.fold .cov.fold{background:none;border:0;padding:0;overflow:visible}
 .locPanel .row.fold .du{color:#8A7C68}
+.foldico{width:30px;height:30px;display:block;flex:0 0 auto}
+.locPanel .row.fold .nm{font-weight:600}
 .favList::-webkit-scrollbar{width:5px}
 .favList::-webkit-scrollbar-thumb{background:rgba(233,222,197,.18);border-radius:3px}
 /* 导入歌曲列表：收藏页再往左滑出来的一层 */
@@ -801,6 +803,10 @@ body[data-gbtn="1"] #btnNext svg,body[data-gbtn="1"] #btnMode svg{
   -webkit-mask-repeat:no-repeat;-webkit-mask-position:center;-webkit-mask-size:100% 100%;
   color:transparent;
 }
+body[data-gbtn="1"] #btnFav svg{
+  opacity:.6;transition:opacity .16s linear;
+}
+body[data-gbtn="1"] #btnFav.on svg{opacity:1}
 body[data-gbtn="1"] #btnFav svg{
   -webkit-mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 3.4l2.72 5.6 6.08.85-4.4 4.32 1.04 6.1L12 17.4l-5.44 2.87 1.04-6.1L3.2 9.85l6.08-.85z' fill='%23fff' fill-opacity='0.30' stroke='%23fff' stroke-width='2.1' stroke-linejoin='round'/></svg>");
 }
@@ -1250,6 +1256,7 @@ body[data-gbtn="1"] .favSearch{border-color:rgba(255,255,255,calc(.24 * var(--gb
     </div>
     <div class="covBody" id="covBody"></div>
     <div class="covFoot">
+      <button class="opt" id="covAllFirst">全选第一个</button>
       <button class="opt" id="covSkip">这首跳过</button>
       <button class="opt" id="covAllSkip">全部跳过</button>
     </div>
@@ -1643,7 +1650,7 @@ var el = {};
     "btnRtssOff","btnRtssGet","lyrLab","lyrSwitch","lyrTip","lyrOffBack","lyrOffZero","lyrOffFwd","lyrOffVal","lyrOffTip","locLab","locCopy","locLink","locTip","locClear",
  "locCount","locPanel","locClose","locList","locPanelCount","locTitleTxt","locFolder",
  "covSwitch","covTip",
- "covPanel","covBody","covClose","covSkip","covAllSkip","covCount","covTitleTxt",
+ "covPanel","covBody","covClose","covSkip","covAllSkip","covAllFirst","covCount","covTitleTxt",
  "drawerSwitch","drawerTip","autoBootSw","autoBootTip"].forEach(function(k){ el[k] = document.getElementById(k); });
 
 window.__err = "";
@@ -3393,71 +3400,118 @@ function paintCrumb(p){
   el.locCrumb.className = "crumb on";
   el.locCrumb.scrollLeft = el.locCrumb.scrollWidth;
 }
-function locDirGroup(path){
-  var rows = state.local || [], out = [];
-  rows.forEach(function(r, i){ if(r.dir === path) out.push(i); });
-  return out;
+function dirDir(r){
+  var d = r && r.dir ? r.dir : "";
+  if(d) return d;
+  var p = String((r && r.path) || "");
+  var i = Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/"));
+  return i >= 0 ? p.slice(0, i) : "";
+}
+function dirRoot(r){
+  var root = (r && r.root) || "";
+  if(root) return root;
+  return (r && r.dir) || "";
+}
+function pathNorm(p){
+  return String(p || "").replace(/[\/]+/g, "\\").toLowerCase();
+}
+function foldIcon(){
+  /* Q 版 Windows 文件夹：小黄夹 + 腮红 + 笑脸 */
+  return '<svg class="foldico" viewBox="0 0 32 32" aria-hidden="true">'
+    + '<path d="M2.6 9.2c0-1.5 1.2-2.7 2.7-2.7h6.5c.9 0 1.7.4 2.2 1.1l1.3 1.7h11c1.5 0 2.7 1.2 2.7 2.7v13.2c0 1.5-1.2 2.7-2.7 2.7H5.3c-1.5 0-2.7-1.2-2.7-2.7z" '
+    + 'fill="#FFD27A" stroke="#D99A2E" stroke-width=".9"/>'
+    + '<path d="M5.9 13.9h20.4c.9 0 1.6.8 1.4 1.7l-1.7 7.2c-.2.9-1 1.5-1.9 1.5H5.7c-1.1 0-1.9-1-1.7-2l1.6-7.2c.2-.7.8-1.2 1.5-1.2z" '
+    + 'fill="#FFEDC2"/>'
+    + '<circle cx="12.2" cy="18.4" r="1.4" fill="#6A5238"/>'
+    + '<circle cx="19.8" cy="18.4" r="1.4" fill="#6A5238"/>'
+    + '<path d="M13.6 21.6c1.6 1.3 3.2 1.3 4.8 0" fill="none" stroke="#6A5238" stroke-width="1.1" stroke-linecap="round"/>'
+    + '<circle cx="10.4" cy="20.7" r="1.1" fill="#F8A9A3" opacity=".75"/>'
+    + '<circle cx="21.6" cy="20.7" r="1.1" fill="#F8A9A3" opacity=".75"/>'
+    + '</svg>';
 }
 function renderLocFolderList(rows, q){
   var cur = state.locDir || "";
+  var h = "", hit = 0, i;
   if(!cur){
-    /* 第一层：文件夹一行一个，散装导入的歌照旧平铺在下面 */
-    var dirs = {}, loose = [];
-    rows.forEach(function(r, i){
-      if(r.dir) (dirs[r.dir] = dirs[r.dir] || []).push(i); else loose.push(i);
+    /* 第一层：一个导入目录一行（点进去才看里面的子文件夹和歌） */
+    var roots = {}, order = [], loose = [];
+    rows.forEach(function(r, k){
+      var root = dirRoot(r);
+      if(root){
+        if(!roots[root]){ roots[root] = []; order.push(root); }
+        roots[root].push(k);
+      }else loose.push(k);
     });
-    var h = "", hit = 0;
-    Object.keys(dirs).forEach(function(d){
+    order.forEach(function(d){
       var name = dirBase(d) || d;
-      var cnt = dirs[d].length;
+      var cnt = roots[d].length;
       if(q && (name + " " + d).toLowerCase().indexOf(q) < 0) return;
       hit++;
       h += '<div class="row fold" data-dir="' + esc(d) + '">'
-        + '<span class="cov fold">▤</span>'
+        + '<span class="cov fold">' + foldIcon() + '</span>'
         + '<div class="txt"><div class="nm">' + esc(name) + '</div>'
         + '<div class="ar">' + cnt + " 首 · 点开看里面的歌</div></div>"
         + '<span class="du">›</span>'
         + '<span class="rstar on" data-dirrm="' + esc(d) + '" role="button" aria-label="移除整个文件夹">×</span>'
         + '</div>';
     });
-    loose.forEach(function(i){
-      var r = rows[i];
+    loose.forEach(function(i2){
+      var r = rows[i2];
       if(q && (r.name || "").toLowerCase().indexOf(q) < 0) return;
       hit++;
-      h += '<div class="row" data-l="' + i + '">'
-        + '<span class="cov">' + (r.cover ? '<img src="' + esc(r.cover) + '" alt="">' : "♪") + '</span>'
-        + '<div class="txt"><div class="nm">' + esc(r.name || "未命名") + '</div>'
-        + '<div class="ar">' + (r.mode === "copy" ? "已复制进软件" : "链接原文件") + '</div></div>'
-        + '<span class="du">' + fmtSize(r.size) + '</span>'
-        + '<span class="rstar on" data-ldel="' + i + '" role="button" aria-label="移除">×</span>'
-        + '</div>';
+      h += locSongRow(r, i2, "");
     });
     if(!hit) h = '<div class="empty-row">' + (q ? ("没找到「" + esc(state.locQ) + "」") : "还没有导入文件夹，去设置里点「导入文件夹」。") + '</div>';
     el.locList.innerHTML = h;
     paintCrumb("");
     return;
   }
-  var idx = locDirGroup(cur), hit = 0, h = "";
-  idx.forEach(function(i){
-    var r = rows[i];
+  /* 进到某个目录里：先列子文件夹（一行一个，再点进去），再列本层直接放着的歌 */
+  var curN = pathNorm(cur);
+  var subs = {}, subOrder = [], songs = [], rel;
+  rows.forEach(function(r, k){
+    var d = dirDir(r), dn = pathNorm(d);
+    if(dn === curN){ songs.push(k); return; }
+    if(dn.indexOf(curN + "\\") === 0){
+      rel = String(d).slice(cur.length).replace(/^[\\\/]+/, "");
+      var seg = rel.split(/[\\\/]+/)[0];
+      if(!seg) return;
+      var key = cur + "\\" + seg;           /* 用当前目录的写法拼，大小写跟着用户走 */
+      if(!subs[key]){ subs[key] = []; subOrder.push(key); }
+      subs[key].push(k);
+    }
+  });
+  subOrder.sort(function(a, b){ return dirBase(a).localeCompare(dirBase(b), "zh"); });
+  subOrder.forEach(function(d){
+    var name = dirBase(d) || d, cnt = subs[d].length;
+    if(q && (name + " " + d).toLowerCase().indexOf(q) < 0) return;
+    hit++;
+    h += '<div class="row fold" data-dir="' + esc(d) + '">'
+      + '<span class="cov fold">' + foldIcon() + '</span>'
+      + '<div class="txt"><div class="nm">' + esc(name) + '</div>'
+      + '<div class="ar">' + cnt + " 首 · 点开看里面的歌</div></div>"
+      + '<span class="du">›</span>'
+      + '<span class="rstar on" data-dirrm="' + esc(d) + '" role="button" aria-label="移除整个文件夹">×</span>'
+      + '</div>';
+  });
+  songs.forEach(function(k){
+    var r = rows[k];
     if(q && (r.name || "").toLowerCase().indexOf(q) < 0) return;
     hit++;
-    var sub = "";
-    try{
-      var rel = String(r.path || "").slice(cur.length).replace(/^[\\\/]+/, "");
-      sub = rel.indexOf("\\") >= 0 ? rel.slice(0, rel.lastIndexOf("\\")) : "";
-    }catch(e){}
-    h += '<div class="row" data-l="' + i + '">'
-      + '<span class="cov">' + (r.cover ? '<img src="' + esc(r.cover) + '" alt="">' : "♪") + '</span>'
-      + '<div class="txt"><div class="nm">' + esc(r.name || "未命名") + '</div>'
-      + '<div class="ar">' + (sub ? esc(sub) : "在这个文件夹里") + '</div></div>'
-      + '<span class="du">' + fmtSize(r.size) + '</span>'
-      + '<span class="rstar on" data-ldel="' + i + '" role="button" aria-label="移除">×</span>'
-      + '</div>';
+    h += locSongRow(r, k, "在这个文件夹里");
   });
   if(!hit) h = '<div class="empty-row">' + (q ? ("这个文件夹里没找到「" + esc(state.locQ) + "」") : "这个文件夹里没有歌了。") + '</div>';
   el.locList.innerHTML = h;
   paintCrumb(cur);
+}
+function locSongRow(r, idx, sub){
+  return '<div class="row" data-l="' + idx + '">'
+    + '<span class="cov">' + (r.cover ? '<img src="' + esc(r.cover) + '" alt="">' : "♪") + '</span>'
+    + '<div class="txt"><div class="nm">' + esc(r.name || "未命名") + '</div>'
+    + '<div class="ar">' + esc(sub || (r.mode === "copy" ? "已复制进软件" : "链接原文件")) + '</div></div>'
+    + '<span class="du">' + fmtSize(r.size) + '</span>'
+    + '<span class="rstar on" data-ldel="' + idx + '" role="button" aria-label="移除">×</span>'
+    + '</div>';
 }
 /* 收藏 / 导入面板的搜索框：输入即筛，标题旁边就贴着 */
 if(el.favSearch){
@@ -3681,6 +3735,61 @@ if(el.covAllSkip) el.covAllSkip.addEventListener("click", function(){
   covPos = covQueue.length;
   renderCov();
 });
+/* 全选第一个：整批自动搜歌名，谁搜到了就用搜索结果的第 1 张当封面 */
+function covAutoFirst(){
+  if(covBusy){ toast("正在配，等这批配完"); return; }
+  var todo = covQueue.slice(covPos);
+  if(!todo.length){ toast("这批已经配完了"); return; }
+  var i = 0, hit = 0, miss = 0, done = 0;
+  covBusy = true;
+  function tally(){
+    if(el.covCount){
+      var shown = Math.min(covQueue.length, covPos + done);
+      el.covCount.textContent = shown + "/" + covQueue.length;
+    }
+  }
+  function step(){
+    if(i >= todo.length){
+      covBusy = false;
+      covDone += hit;
+      covPos = covQueue.length;
+      if(el.covCount) el.covCount.textContent = covQueue.length + "/" + covQueue.length;
+      var h0 = document.getElementById("covHint");
+      if(h0) h0.textContent = "";
+      renderCov();
+      return;
+    }
+    var r = todo[i]; i++; done = i;
+    var hint = document.getElementById("covHint");
+    if(hint) hint.textContent = "自动配封面… " + i + "/" + todo.length + "（" + r.name + "）";
+    fetch("/cover/search?q=" + encodeURIComponent(covQueryOf(r)), {cache: "no-store"})
+      .then(function(x){ return x.json(); })
+      .then(function(d){
+        var first = (d && d.rows && d.rows[0]) || null;
+        if(!first){ miss++; tally(); step(); return null; }
+        return fetch("/local/cover?id=" + r.id + "&url=" + encodeURIComponent(first.cover), {cache: "no-store"})
+          .then(function(x){ return x.json(); })
+          .then(function(dd){
+            if(dd && dd.ok){
+              r.cover = dd.cover; hit++;
+              for(var a=0; a<state.local.length; a++){
+                if(state.local[a].id === r.id) state.local[a].cover = dd.cover;
+              }
+              for(var b=0; b<state.fav.length; b++){
+                if(state.fav[b].k === ("local#" + r.id)) state.fav[b].cover = dd.cover;
+              }
+              renderLocList(); renderFavList();
+            }else{
+              miss++;
+            }
+            tally(); step();
+          });
+      })
+      .catch(function(){ miss++; tally(); step(); });
+  }
+  step();
+}
+if(el.covAllFirst) el.covAllFirst.addEventListener("click", covAutoFirst);
 paintCovSw();
 if(el.locClear){
   el.locClear.addEventListener("click", function(){
@@ -3700,17 +3809,22 @@ if(el.locList){
     if(dr){
       e.stopPropagation();
       var d = dr.getAttribute("data-dirrm");
+      /* 连同这个文件夹底下的所有子文件夹一起移出 */
+      var dN = pathNorm(d);
       var killed = [];
-      state.local.forEach(function(r){ if(r.dir === d) killed.push(r); });
+      state.local.forEach(function(r){
+        var rd = pathNorm(dirDir(r)), rr = pathNorm(dirRoot(r));
+        if(rd === dN || rd.indexOf(dN + "\\") === 0 || (rr && rr.indexOf(dN) === 0)) killed.push(r);
+      });
       if(!killed.length) return;
       if(!confirm("把这个文件夹下面的 " + killed.length + " 首一起移出导入列表？")) return;
       killed.forEach(function(r){ fetch("/local/del?id=" + r.id, {cache:"no-store"}).catch(function(){}); });
-      state.local = state.local.filter(function(r){ return r.dir !== d; });
+      state.local = state.local.filter(function(r){ return killed.indexOf(r) < 0; });
       state.fav = state.fav.filter(function(f){
         for(var i=0;i<killed.length;i++){ if(String(f.k) === ("local#" + killed[i].id)) return false; }
         return true;
       });
-      if(state.locDir === d) state.locDir = "";
+      if(pathNorm(state.locDir || "").indexOf(dN) === 0) state.locDir = "";
       saveFav(); paintFavBtn(); paintLocCount(); renderFavList(); renderLocList();
       toast("已移出 " + killed.length + " 首");
       return;
@@ -3787,7 +3901,21 @@ if(el.locCrumb){
     if(!t) return;
     var back = t.closest("[data-crumb-back]");
     if(back){
-      state.locDir = "";
+      /* ‹ 先退到上一级目录；已经在导入根目录里就退回导入列表 */
+      var curD = state.locDir || "";
+      var par = "";
+      var cutAt = Math.max(curD.lastIndexOf("\\"), curD.lastIndexOf("/"));
+      if(cutAt > 2) par = curD.slice(0, cutAt);
+      var inside = false;
+      if(par){
+        var parN = pathNorm(par);
+        (state.local || []).some(function(r){
+          var root = dirRoot(r);
+          if(root && pathNorm(root).indexOf(parN) === 0){ inside = true; return true; }
+          return false;
+        });
+      }
+      state.locDir = inside ? par : "";
       state.locQ = ""; if(el.locSearch) el.locSearch.value = "";
       renderLocList();
       return;
@@ -4481,11 +4609,21 @@ var MODE_ICON = {
   order: '<path d="M4 7h13"/><path d="M17 4.6 19.4 7 17 9.4"/><path d="M20 17H7"/><path d="M7 19.4 4.6 17 7 14.6"/>',
   single: '<path d="M20 12a8 8 0 1 1-2.35-5.66"/><path d="M20 4.8v3.7h-3.7"/><path d="M11.4 9.6h1.2v4.6"/><path d="M10.6 14.2h2.6"/>'
 };
+/* 毛玻璃化按钮开启时，霜面靠遮罩落进图案内部；遮罩必须跟着当前图标换，
+   否则换了模式图标还是原来那个（这就是「只切模式不切图标」的根） */
+var MODE_MASK = {
+  order: "-webkit-mask-image:url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M4 7h13' fill='none' stroke='%23fff' stroke-width='2.1' stroke-linecap='round'/><path d='M17 4.6 19.4 7 17 9.4' fill='%23fff'/><path d='M20 17H7' fill='none' stroke='%23fff' stroke-width='1.9' stroke-linecap='round'/><path d='M7 19.4 4.6 17 7 14.6' fill='%23fff'/></svg>\")",
+  single: "-webkit-mask-image:url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M20 12a8 8 0 1 1-2.35-5.66' fill='none' stroke='%23fff' stroke-width='2.1' stroke-linecap='round'/><path d='M20 4.8v3.7h-3.7' fill='%23fff'/><path d='M11.4 9.6h1.2v4.6' fill='none' stroke='%23fff' stroke-width='1.9' stroke-linecap='round'/><path d='M10.6 14.2h2.6' fill='none' stroke='%23fff' stroke-width='1.8' stroke-linecap='round'/></svg>\")"
+};
 function paintMode(){
-  el.icoMode.innerHTML = (state.mode === "single") ? MODE_ICON.single : MODE_ICON.order;
-  var k = (state.mode === "single") ? "modeSingle" : "modeOrder";
-  el.btnMode.setAttribute("title", L(k));
-  el.btnMode.setAttribute("aria-label", L(k));
+  var k = (state.mode === "single") ? "single" : "order";
+  el.icoMode.innerHTML = MODE_ICON[k];
+  var gb = document.body.getAttribute("data-gbtn") === "1";
+  el.icoMode.removeAttribute("style");
+  if(gb) el.icoMode.setAttribute("style", MODE_MASK[k]);
+  var lk = (state.mode === "single") ? "modeSingle" : "modeOrder";
+  el.btnMode.setAttribute("title", L(lk));
+  el.btnMode.setAttribute("aria-label", L(lk));
   el.btnMode.classList.toggle("on", state.mode === "single");
 }
 function setMode(m, quiet){
@@ -6070,6 +6208,10 @@ function shotStart(){
       clearInterval(_shotWait); _shotWait = null;
       img.style.opacity = "1";
       if(old) old.style.opacity = "0";
+      /* 旧的接流图要早点松手，不然后台那条流会一直占着抓屏线程 */
+      if(old){
+        setTimeout(function(){ try{ if(old !== img) old.removeAttribute("src"); }catch(e){} }, 500);
+      }
       _shotIdx = idx;
       document.body.setAttribute("data-shot", "1");
     }else if(Date.now() - t0 > 3000){
@@ -6128,6 +6270,20 @@ function shotWatchdog(){
   }).catch(function(){ _wdBusy = false; });
 }
 if(!_wdTimer) _wdTimer = setInterval(shotWatchdog, 900);
+/* 兜底换流：万一浏览器把那条 MJPEG 连接半死不活地攥着（看门狗还骗过去了），
+   每 50 秒静悄悄换一条新流，新图解码出第一帧之前旧画面照常显示，看不出切换。
+   这就是「开久了毛玻璃定住、切一次悬浮球又好了」的解药——不用用户自己切。 */
+var _shotBind = null;
+function shotRebindTick(){
+  if(!_shotLive || !(state.glass || state.bgt)) return;
+  try{ shotStart(); }catch(e){}
+}
+if(!_shotBind){
+  _shotBind = setInterval(shotRebindTick, 20000);
+  document.addEventListener("visibilitychange", function(){
+    if(!document.hidden) setTimeout(function(){ if(_shotLive) shotRebindTick(); }, 600);
+  });
+}
 /* 排查用：/stat 里看不到页面内部状态时，控制台里 bfShotState() 一眼就知道流死没死 */
 window.bfShotState = function(){ return {live: _shotLive, sid: _shotSid, n: _wdN, stuck: _wdStuck}; };
 function paintGlass(){
@@ -6199,6 +6355,7 @@ function paintGbtn(){
   document.body.style.setProperty("--gbtnblur", (on ? px : 0) + "px");
   document.body.style.setProperty("--gbtnk", String(on ? Math.min(1.6, 0.45 + px / 28) : 1));
   narrowOpts(on);
+  paintMode();          /* 图标遮罩跟着按钮毛玻璃开关走 */
   if(el.gbtnSwitch){
     el.gbtnSwitch.textContent = on ? "开启" : "关闭";
     el.gbtnSwitch.classList.toggle("on", on);

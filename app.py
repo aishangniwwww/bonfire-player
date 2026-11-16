@@ -27,7 +27,7 @@ import zipfile
 from ctypes import wintypes
 
 APP_TITLE = "Bonfire"
-APP_VER = "1.4.1"
+APP_VER = "1.6.0"
 UPDATE_API = "https://api.github.com/repos/aishangniwwww/bonfire-player/releases/latest"
 WIN_W = 300
 WIN_H = 312
@@ -640,18 +640,43 @@ def local_import(mode="copy", paths=None, tag_dir=None):
 
     if mode == "copy":
         os.makedirs(LOCAL_MUSIC, exist_ok=True)
+    root_abs = ""
+    if tag_dir:
+        try:
+            root_abs = os.path.abspath(tag_dir)
+        except Exception:
+            root_abs = ""
     for path in got:
         if not os.path.isfile(path):
             failed.append({"name": os.path.basename(path), "why": "文件已经不在了"})
             continue
         try:
+            # 这一首歌在导入根目录下面的哪一层（保留子文件夹分类）
+            rel = ""
+            if root_abs:
+                try:
+                    rp = os.path.relpath(os.path.abspath(path), root_abs)
+                    if not rp.startswith("..") and rp not in (".", ".."):
+                        rel = os.path.dirname(rp) or ""
+                except Exception:
+                    rel = ""
+                if rel in (".", ".."):
+                    rel = ""
+            disp_dir = root_abs if root_abs else ""
+            if root_abs and rel:
+                disp_dir = os.path.join(root_abs, rel)
             if mode == "copy":
                 name = os.path.basename(path)
-                dst = os.path.join(LOCAL_MUSIC, name)
+                dst_dir = os.path.join(LOCAL_MUSIC, rel) if rel else LOCAL_MUSIC
+                try:
+                    os.makedirs(dst_dir, exist_ok=True)
+                except Exception:
+                    dst_dir = LOCAL_MUSIC
+                dst = os.path.join(dst_dir, name)
                 if os.path.abspath(path) != os.path.abspath(dst):
                     if os.path.exists(dst):
                         stem, ext = os.path.splitext(name)
-                        dst = os.path.join(LOCAL_MUSIC, "%s_%d%s" % (stem, nid, ext))
+                        dst = os.path.join(dst_dir, "%s_%d%s" % (stem, nid, ext))
                     shutil.copy2(path, dst)
                 real = dst
             else:
@@ -674,8 +699,11 @@ def local_import(mode="copy", paths=None, tag_dir=None):
                 stale.update({"name": os.path.splitext(os.path.basename(real))[0],
                               "path": real, "size": size, "mode": mode,
                               "added": int(time.time())})
-                if tag_dir:
-                    stale["dir"] = tag_dir
+                if root_abs:
+                    stale["root"] = root_abs
+                    stale["rel"] = rel
+                if disp_dir:
+                    stale["dir"] = disp_dir
                 live[key] = stale
                 added.append(stale)
                 healed += 1
@@ -683,8 +711,11 @@ def local_import(mode="copy", paths=None, tag_dir=None):
             e = {"id": nid, "name": os.path.splitext(os.path.basename(real))[0],
                  "path": real, "size": size, "mode": mode, "added": int(time.time()),
                  "cover": ""}
-            if tag_dir:
-                e["dir"] = tag_dir
+            if root_abs:
+                e["root"] = root_abs
+                e["rel"] = rel
+            if disp_dir:
+                e["dir"] = disp_dir
             rows.append(e)
             live[key] = e
             added.append(e)
@@ -1272,22 +1303,41 @@ def set_top_hard(on):
     return on
 
 
+def _topmost_above(hwnd):
+    """看看 topmost 那一层里有没有别的窗口压在我们上面。
+    Z 序里往前的那些窗口，只要也是 topmost，就说明我们被盖住了。"""
+    try:
+        GW_HWNDPREV = 3
+        WS_EX_TOPMOST = 0x00000008
+        h = user32.GetWindow(hwnd, GW_HWNDPREV)
+        n = 0
+        while h and n < 40:
+            n += 1
+            if user32.IsWindowVisible(h) and (user32.GetWindowLongW(h, -20) & WS_EX_TOPMOST):
+                # 被排除出截图的窗口（我们自己的玻璃）不算
+                return True
+            h = user32.GetWindow(h, GW_HWNDPREV)
+    except Exception:
+        pass
+    return False
+
+
 def hard_top_loop():
-    """只有「正在用这个窗口」的时候才把它重新顶到最前。
-    切去别的窗口就停手（对方要也是置顶的，就让它赢），但**不清掉用户开的开关**——
-    以前这里是直接撒手 + 把标记抹成 False，结果用户开了「置顶最高」，
-    鼠标一点到别处开关自己就关了。现在只是这轮不顶，回到本窗口继续顶。"""
+    """置顶最高：真的往 topmost 那层的最上面压，不抢焦点。
+    以前只在「自己已经是前台」时才顶，别的东西（抖音这种自己也 topmost 的窗口）
+    只要压上来就不动了，看起来跟普通置顶没区别。现在不管前台是谁，
+    开了就每 0.3 秒检查一次：被别的 topmost 窗口压住就重新 SetWindowPos 顶回去。
+    SWP_NOACTIVATE 所以不抢键盘、打字不会断；窗口最小化成球的时候也照做。"""
     while True:
-        time.sleep(1.0)
+        time.sleep(0.3)
         if not TOP.get("hard"):
             continue
         try:
             hwnd = find_hwnd()
             if not hwnd or user32.IsIconic(hwnd):
                 continue
-            fg = user32.GetForegroundWindow()
-            if fg != hwnd:
-                continue          # 前台是别人：这一秒不抢，开关保持
+            if is_topmost(hwnd) and not _topmost_above(hwnd):
+                continue          # 已经在最上面，别白刷
             user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
         except Exception:
@@ -1400,6 +1450,28 @@ class _FastGrab:
 
 
 GRABBER = [None]
+# 抓屏线程（bg_loop 每秒 4~5 次）和画面流线程（bgstream 每秒几十次）都会
+# 临时把自己从截图里排除，两条线交错时互相「解排除」会让某一帧拍到自己——
+# 屏幕上就是一帧暗闪。这里统一加锁 + 计数，流开着的时候 bg_loop 干脆不拍。
+BG_LOCK = threading.Lock()
+BG_STREAMS = {"n": 0}
+
+
+def _grab_excluded():
+    """排除自己 → 等 DWM 合成一帧 → 拍 → 立刻恢复。全程在锁里，避免交错。"""
+    with BG_LOCK:
+        hwnd = find_hwnd()
+        if not hwnd:
+            return None
+        user32.SetWindowDisplayAffinity(hwnd, 0x00000011)
+        try:
+            try:
+                ctypes.windll.dwmapi.DwmFlush()   # 保证拍到的是已经合成好的画面
+            except Exception:
+                pass
+            return _bg_grab()
+        finally:
+            user32.SetWindowDisplayAffinity(hwnd, 0x00000000)
 
 
 def _bg_grab():
@@ -1430,16 +1502,13 @@ def bg_loop():
             if not hwnd:
                 continue
             idle = time.time() - BG_REAL["last"] > 1.6
-            if idle:
-                BG_REAL["raw"] = None
+            if idle or BG_STREAMS["n"] > 0:
+                if idle:
+                    BG_REAL["raw"] = None
                 continue
             # 只在按下快门这一瞬间把自己从截图里排除，拍完立刻恢复，
             # 这样用户自己截图 / 录屏时窗口照常出现
-            user32.SetWindowDisplayAffinity(hwnd, 0x00000011)
-            try:
-                got = _bg_grab()
-            finally:
-                user32.SetWindowDisplayAffinity(hwnd, 0x00000000)
+            got = _grab_excluded()
             if not got:
                 continue
             BG_REAL["raw"] = got
@@ -1487,6 +1556,47 @@ def bg_shot(radius):
         return None
 
 
+BG_LUMA = {"mean": None, "stable": 0, "bad": 0}
+# 抓屏用的兼容 DC 会「坏死」：GetDIBits 还照样返回，但拿回来的是同一张老图，
+# 屏幕上就是毛玻璃定在一张图片上不动了（切一次悬浮球会重建窗口，就又能动）。
+# 这里记一下连续一模一样的帧有多久了，卡太久就把 grabber 整个重建一次，自愈。
+BG_SIG = {"key": None, "since": 0.0, "rebuild": 0.0}
+BG_GRAB_FAIL = {"n": 0}
+
+
+def _sig(img):
+    """一小撮像素的指纹，判断「这一帧跟上一帧是不是完全一样」，比整帧哈希便宜。"""
+    try:
+        g = img.convert("L").resize((48, 48))
+        return hash(g.tobytes())
+    except Exception:
+        return None
+
+
+def _reset_grabber(why=""):
+    try:
+        if GRABBER[0] is not None:
+            GRABBER[0].close()
+    except Exception:
+        pass
+    GRABBER[0] = None
+    BG_LUMA["stable"] = 0
+    BG_LUMA["bad"] = 0
+    BG_LUMA["mean"] = None
+    BG_SIG["key"] = None
+    BG_SIG["since"] = 0.0
+    BG_SIG["rebuild"] = time.time()
+    if why:
+        log_api("bg grabber rebuild (%s)" % why)
+
+
+def _luma(img):
+    """32×32 灰度均值，判断这一帧是不是「突然变暗」的坏帧，约 0.2ms。"""
+    g = img.convert("L").resize((32, 32))
+    d = g.tobytes()
+    return sum(d) / float(len(d))
+
+
 def bg_frame_jpeg(quality=62):
     """抓一帧 → 直接 JPEG（不在这里糊）。模糊交给页面的 CSS filter，
     那是 GPU 干的，可以跑到 60 帧；PIL 的高斯模糊一帧就要好几毫秒。"""
@@ -1494,15 +1604,63 @@ def bg_frame_jpeg(quality=62):
     if not hwnd:
         return None
     try:
-        user32.SetWindowDisplayAffinity(hwnd, 0x00000011)
-        try:
-            got = _bg_grab()
-        finally:
-            user32.SetWindowDisplayAffinity(hwnd, 0x00000000)
+        got = _grab_excluded()
         if not got:
+            BG_GRAB_FAIL["n"] += 1
+            if BG_GRAB_FAIL["n"] >= 8:
+                BG_GRAB_FAIL["n"] = 0
+                _reset_grabber("抓不到帧")
             return None
+        BG_GRAB_FAIL["n"] = 0
         import io
         img = got[0]                      # 已经是 RGB 了（frombuffer 直接给 RGB）
+        # 画面流一直跟上一帧一模一样：可能是屏幕上真没动，也可能是抓屏 DC 死了。
+        # 静超过 3 秒就重建一次 grabber（重建很便宜，也不会让画面闪），
+        # 这样「毛玻璃定在一张图片上」最多三秒就会自己活过来。
+        try:
+            k = _sig(img)
+            now = time.time()
+            if k is not None and k == BG_SIG["key"]:
+                if not BG_SIG["since"]:
+                    BG_SIG["since"] = now
+                    if not BG_SIG["rebuild"]:
+                        BG_SIG["rebuild"] = now
+                elif now - BG_SIG["since"] > 25.0 and now - BG_SIG["rebuild"] > 30.0:
+                    _reset_grabber("画面长时间不动 %.1fs/%.1fs" % (now - BG_SIG["since"], now - BG_SIG["rebuild"]))
+                    got = _grab_excluded()
+                    if not got:
+                        return None
+                    img = got[0]
+                    k = _sig(img)
+                    BG_SIG["key"] = k
+                    BG_SIG["since"] = time.time()
+            else:
+                BG_SIG["key"] = k
+                BG_SIG["since"] = 0.0
+        except Exception:
+            pass
+        # 抖一下的坏帧（拍到自己 / 半合成）会突然变暗，画面没真变之前一律丢掉，
+        # 流那边会拿上一帧顶上，用户看不到闪。
+        try:
+            m = _luma(img)
+            prev = BG_LUMA["mean"]
+            if prev is not None and BG_LUMA["stable"] >= 3 and abs(m - prev) > 9:
+                # 第一下突然变暗当坏帧丢掉；连着两帧都这样说明背后真的换了画面，照收。
+                if BG_LUMA["bad"] < 1:
+                    BG_LUMA["bad"] = BG_LUMA["bad"] + 1
+                    return None
+                BG_LUMA["bad"] = 0
+                BG_LUMA["stable"] = 0
+                BG_LUMA["mean"] = m
+            else:
+                if prev is not None and abs(m - prev) < 1.2:
+                    BG_LUMA["stable"] = min(BG_LUMA["stable"] + 1, 6)
+                else:
+                    BG_LUMA["stable"] = 0
+                BG_LUMA["bad"] = 0
+                BG_LUMA["mean"] = m
+        except Exception:
+            pass
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=quality, optimize=False)
         BG_REAL["last"] = time.time()
@@ -1526,31 +1684,35 @@ def bg_stream(handler, fps=60, quality=62, sid=""):
     handler.end_headers()
     step = 1.0 / max(15, min(240, int(fps)))
     n = 0
-    last = None                      # 抓不到帧的时候拿上一帧顶上，页面就不会空一下（黑闪）
-    while True:
-        t0 = time.time()
-        try:
-            data = bg_frame_jpeg(quality) or last
-        except Exception:
-            data = last
-        if data:
+    BG_STREAMS["n"] = BG_STREAMS.get("n", 0) + 1      # 流开着时 bg_loop 让位，别抢屏
+    try:
+        last = None                  # 抓不到帧的时候拿上一帧顶上，页面就不会空一下（黑闪）
+        while True:
+            t0 = time.time()
             try:
-                handler.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n"
-                                    b"Content-Length: " + str(len(data)).encode() +
-                                    b"\r\n\r\n" + data + b"\r\n")
-                handler.wfile.flush()
-                n += 1
-                BG_REAL["seq"] = BG_REAL.get("seq", 0) + 1   # 页面靠这个判断流是不是还活着
-                if sid:
-                    bs = BG_REAL.setdefault("byid", {})
-                    bs[sid] = bs.get(sid, 0) + 1
-                    if len(bs) > 20:
-                        bs.pop(next(iter(bs)))
-                last = data
+                data = bg_frame_jpeg(quality) or last
             except Exception:
-                break
-        dt = time.time() - t0
-        time.sleep(max(0.0, step - dt))
+                data = last
+            if data:
+                try:
+                    handler.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n"
+                                        b"Content-Length: " + str(len(data)).encode() +
+                                        b"\r\n\r\n" + data + b"\r\n")
+                    handler.wfile.flush()
+                    n += 1
+                    BG_REAL["seq"] = BG_REAL.get("seq", 0) + 1   # 页面靠这个判断流是不是还活着
+                    if sid:
+                        bs = BG_REAL.setdefault("byid", {})
+                        bs[sid] = bs.get(sid, 0) + 1
+                        if len(bs) > 20:
+                            bs.pop(next(iter(bs)))
+                    last = data
+                except Exception:
+                    break
+            dt = time.time() - t0
+            time.sleep(max(0.0, step - dt))
+    finally:
+        BG_STREAMS["n"] = max(0, BG_STREAMS.get("n", 1) - 1)
     log_api("bg stream closed after %d frames" % n)
 
 
