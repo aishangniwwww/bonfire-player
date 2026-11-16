@@ -503,11 +503,15 @@ body[data-glass="3"] #setSheet{background:rgba(21,18,14,.58)}
 .starbtn.on svg path{fill:#FFFFFF;stroke:#FFFFFF}
 .starbtn svg path{transition:fill .18s,stroke .18s}
 .rstar{
-  flex:0 0 auto;margin-left:2px;padding:2px 3px;font-size:12px;line-height:1;
-  color:#5E5346;cursor:pointer;transition:color .18s,transform .18s;
+  flex:0 0 auto;margin-left:3px;min-width:22px;min-height:22px;
+  display:flex;align-items:center;justify-content:center;
+  padding:0 4px;border-radius:8px;font-size:13px;line-height:1;
+  color:#5E5346;cursor:pointer;transition:color .18s,background .18s,transform .18s;
+  -webkit-tap-highlight-color:transparent;
 }
-.rstar:hover{color:#C9BCA4}
+.rstar:hover{color:#F0A93B;background:rgba(240,169,59,.14)}
 .rstar.on{color:#FFFFFF}
+.rstar.on:hover{color:#FFD8A0;background:rgba(255,216,160,.14)}
 .rstar:active{transform:scale(.88)}
 
 /* 收藏面板：从右往左滑出的长方形，可点空白/叉关闭 */
@@ -784,8 +788,7 @@ body[data-gbtn="1"] .icobtn.pinned{background:rgba(255,255,255,.18);border-color
 body[data-gbtn="1"] button,body[data-gbtn="1"] .opt,body[data-gbtn="1"] .dkbtn,
 body[data-gbtn="1"] .icobtn,body[data-gbtn="1"] .sbt,body[data-gbtn="1"] .tabitem,
 body[data-gbtn="1"] .clr,body[data-gbtn="1"] .bgrow label,body[data-gbtn="1"] .sw,
-body[data-gbtn="1"] .favSearch,body[data-gbtn="1"] .rate,body[data-gbtn="1"] .seek,
-body[data-gbtn="1"] .pill,body[data-gbtn="1"] .lnk{border-radius:999px}
+body[data-gbtn="1"] .favSearch,body[data-gbtn="1"] .rate{border-radius:999px}
 /* 打成胶囊以后同样的内边距会显得发胖，左右各收 2px、上下各收 1px（只收一点，别把字挤小） */
 body[data-gbtn="1"] .opt{padding:4px 7px;min-height:26px}
 /* 主播放页控制键：上一首 / 下一首 / 收藏 / 声音 / 播放模式 / 倍速
@@ -3187,6 +3190,26 @@ function playFav(i){
   closeFav();
   setView("main", true);
 }
+/* 面板滑入兜底：WebView2 里 transform 过渡偶尔会停在第 0 帧，
+   整个面板卡在屏幕外，看起来就是「点了没反应」。0.4s 后还没到位就直接吸附。 */
+function snapPanel(p){
+  if(!p) return;
+  setTimeout(function(){
+    try{
+      var tr = getComputedStyle(p).transform || "none";
+      if(tr !== "none" && tr.indexOf("matrix(1, 0, 0, 1, 0, 0)") < 0){
+        if(p.getAnimations) p.getAnimations().forEach(function(a){ try{ a.cancel(); }catch(e){} });
+        p.style.transition = "none";
+        p.style.transform = "translateX(0px)";
+        p.style.opacity = "";
+        setTimeout(function(){
+          p.style.transition = "";
+          p.style.transform = "";
+        }, 80);
+      }
+    }catch(e){}
+  }, 420);
+}
 function openFav(){
   var wasLoc = !!state.localOpen;
   state.favOpen = true;
@@ -3196,6 +3219,7 @@ function openFav(){
     el.favPanel.classList.add("show");
     el.favMask.classList.add("show");
     el.favPanel.setAttribute("aria-hidden", "false");
+    snapPanel(el.favPanel);
   };
   if(wasLoc){
     /* 导入列表先往右滑回去，收藏再从右边滑进来 */
@@ -3339,7 +3363,13 @@ function renderLocList(){
     paintCrumb("");
     return;
   }
-  if(foldMode()){ renderLocFolderList(rows, q); return; }
+  if(foldMode()){
+    /* 有搜索词时不分文件夹，整个导入库里找——否则在第一层只有「已下载音乐」一行，
+       搜「邓紫棋」永远搜不到（歌都在它下面）。 */
+    if(q){ renderLocSearch(rows, q); return; }
+    renderLocFolderList(rows, q);
+    return;
+  }
   var h = "", hit = 0;
   rows.forEach(function(r, i){
     if(q && (r.name || "").toLowerCase().indexOf(q) < 0) return;
@@ -3353,6 +3383,20 @@ function renderLocList(){
       + '</div>';
   });
   if(!hit) h = '<div class="empty-row">导入列表里没找到「' + esc(state.locQ) + "」，换个词试试。</div>";
+  el.locList.innerHTML = h;
+  paintCrumb("");
+}
+/* ===== 文件夹模式下的搜索：跨所有子文件夹找歌 ===== */
+function renderLocSearch(rows, q){
+  var h = "", hit = 0;
+  rows.forEach(function(r, i){
+    var folder = dirBase(dirDir(r) || "") || "";
+    if((r.name || "").toLowerCase().indexOf(q) < 0 &&
+       folder.toLowerCase().indexOf(q) < 0) return;
+    hit++;
+    h += locSongRow(r, i, folder ? ("在 " + folder) : "");
+  });
+  if(!hit) h = '<div class="empty-row">导入库里没找到「' + esc(state.locQ) + "」，换个词试试。</div>";
   el.locList.innerHTML = h;
   paintCrumb("");
 }
@@ -3378,14 +3422,6 @@ function dirBase(p){
   p = String(p || "");
   var i = Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/"));
   return i >= 0 ? p.slice(i + 1) : p;
-}
-function dirParts(p){
-  var s = String(p || ""), out = ["此电脑"];
-  var m = s.match(/^([A-Za-z]:)/);
-  if(m) out.push(m[1]);
-  var rest = m ? s.slice(m[1].length) : s;
-  rest.split(/[\\\/]+/).forEach(function(x){ if(x) out.push(x); });
-  return out;
 }
 function paintCrumb(p){
   if(!el.locCrumb) return;
@@ -3545,10 +3581,6 @@ if(el.locSearch){
 function localRowOf(r){
   return { name: r.name, artist: "本地歌曲", dur: 0, local: true, lid: r.id, cover: r.cover || "",
            url: "/local/file?id=" + r.id, src: "本地" };
-}
-function favOfLocal(r){
-  return { k: "local#" + r.id, name: r.name, artist: "本地歌曲", cover: r.cover || "", dur: 0,
-           local: true, lid: r.id, url: "/local/file?id=" + r.id, src: "本地" };
 }
 /* 导入时配封面：开关存 localStorage，默认开 */
 var COV_KEY = "film.loccover.v1";
@@ -3710,6 +3742,7 @@ function openLoc(){
     if(!state.localOpen) return;
     el.locPanel.classList.add("show");
     el.locPanel.setAttribute("aria-hidden", "false");
+    snapPanel(el.locPanel);
   };
   if(locFromFav){
     el.favPanel.classList.remove("show");
@@ -3727,6 +3760,7 @@ function closeLoc(){
       if(state.localOpen) return;
       el.favPanel.classList.add("show");
       el.favPanel.setAttribute("aria-hidden", "false");
+      snapPanel(el.favPanel);
     }, 180);
   }
   locFromFav = false;
@@ -3989,7 +4023,6 @@ setTimeout(function(){
 
 /* ================= 右滑返回上一级（主播放页不参与） ================= */
 (function(){
-  function pageBox(){ return el.win; }
   function settingsPageOn(){
     if(!el.setWrap) return null;
     var kids = [].slice.call(el.setWrap.children);
@@ -5132,9 +5165,6 @@ function syncHeight(){
   if(!h || h < 120) h = 120;
   fetch("/resize?h=" + h, {cache:"no-store"}).catch(function(){});
 }
-function setFold(on, quiet){
-  setView(on ? "main" : "list", quiet);
-}
 
 /* ================= 优化页 ================= */
 function optSeg(el, attr, val){
@@ -6038,15 +6068,6 @@ function buildSetTabs(){
   }
 }
 
-function openDrawer(){
-  buildSetTabs();
-  closeAllPages();
-  el.setTitle.textContent = "设置";
-  if(el.setBack) el.setBack.classList.remove("on");
-  showPage("cover");
-  if(el.tabDrawer) el.tabDrawer.classList.add("open");
-  if(el.swipeHint) el.swipeHint.style.display = "none";
-}
 function closeDrawer(){
   if(el.tabDrawer) el.tabDrawer.classList.remove("open");
 }
@@ -7058,16 +7079,6 @@ window.addEventListener("hashchange", function(){
   }
 });
 
-
-function fallbackCopy(txt, cb){
-  var ta = document.createElement("textarea");
-  ta.value = txt;
-  ta.style.position = "fixed"; ta.style.opacity = "0";
-  document.body.appendChild(ta);
-  ta.select();
-  try{ document.execCommand("copy"); cb(); }catch(e){ toast("复制没成功，手动选中试试"); }
-  document.body.removeChild(ta);
-}
 
 var rt;
 /* 窗口尺寸由页面主动报，别在 resize 里回灌，否则会自我放大 */
