@@ -3188,12 +3188,23 @@ function playFav(i){
   setView("main", true);
 }
 function openFav(){
+  var wasLoc = !!state.localOpen;
   state.favOpen = true;
   if(el.favSearch) el.favSearch.value = state.favQ || "";
   renderFavList();
-  el.favPanel.classList.add("show");
-  el.favMask.classList.add("show");
-  el.favPanel.setAttribute("aria-hidden", "false");
+  var show = function(){
+    el.favPanel.classList.add("show");
+    el.favMask.classList.add("show");
+    el.favPanel.setAttribute("aria-hidden", "false");
+  };
+  if(wasLoc){
+    /* 导入列表先往右滑回去，收藏再从右边滑进来 */
+    state.localOpen = false;
+    locFromFav = false;
+    el.locPanel.classList.remove("show");
+    el.locPanel.setAttribute("aria-hidden", "true");
+    setTimeout(show, 180);
+  }else show();
   toast(L("favOpen"));
 }
 function closeFav(){
@@ -3410,23 +3421,22 @@ function dirDir(r){
 function dirRoot(r){
   var root = (r && r.root) || "";
   if(root) return root;
-  return (r && r.dir) || "";
+  /* 老记录（1.5.0 之前导入的）没有 root/dir，就用文件路径的上级目录兜底，
+     至少不会掉进「没有文件夹」的平铺堆里。 */
+  return dirDir(r);
 }
 function pathNorm(p){
   return String(p || "").replace(/[\/]+/g, "\\").toLowerCase();
 }
 function foldIcon(){
-  /* Q 版 Windows 文件夹：小黄夹 + 腮红 + 笑脸 */
+  /* Windows 资源管理器那种黄文件夹：后板 + 前板 + 细微高光，不用 Q 版表情 */
   return '<svg class="foldico" viewBox="0 0 32 32" aria-hidden="true">'
-    + '<path d="M2.6 9.2c0-1.5 1.2-2.7 2.7-2.7h6.5c.9 0 1.7.4 2.2 1.1l1.3 1.7h11c1.5 0 2.7 1.2 2.7 2.7v13.2c0 1.5-1.2 2.7-2.7 2.7H5.3c-1.5 0-2.7-1.2-2.7-2.7z" '
-    + 'fill="#FFD27A" stroke="#D99A2E" stroke-width=".9"/>'
-    + '<path d="M5.9 13.9h20.4c.9 0 1.6.8 1.4 1.7l-1.7 7.2c-.2.9-1 1.5-1.9 1.5H5.7c-1.1 0-1.9-1-1.7-2l1.6-7.2c.2-.7.8-1.2 1.5-1.2z" '
-    + 'fill="#FFEDC2"/>'
-    + '<circle cx="12.2" cy="18.4" r="1.4" fill="#6A5238"/>'
-    + '<circle cx="19.8" cy="18.4" r="1.4" fill="#6A5238"/>'
-    + '<path d="M13.6 21.6c1.6 1.3 3.2 1.3 4.8 0" fill="none" stroke="#6A5238" stroke-width="1.1" stroke-linecap="round"/>'
-    + '<circle cx="10.4" cy="20.7" r="1.1" fill="#F8A9A3" opacity=".75"/>'
-    + '<circle cx="21.6" cy="20.7" r="1.1" fill="#F8A9A3" opacity=".75"/>'
+    + '<path d="M3 8.6c0-1.3 1-2.3 2.3-2.3h6.2c.7 0 1.4.4 1.8 1l1.2 1.8h12.1c1.3 0 2.3 1 2.3 2.3v12.5c0 1.3-1 2.3-2.3 2.3H5.3C4 26.2 3 25.2 3 23.9z" '
+    + 'fill="#F2C14E"/>'
+    + '<path d="M3 12.3h26v11.6c0 1.3-1 2.3-2.3 2.3H5.3C4 26.2 3 25.2 3 23.9z" '
+    + 'fill="#FFD86B"/>'
+    + '<path d="M3 12.3h26v1.6H3z" fill="#E0A93C" opacity=".55"/>'
+    + '<path d="M4.6 14.6h22.8" stroke="#FFF0B6" stroke-width=".9" opacity=".8"/>'
     + '</svg>';
 }
 function renderLocFolderList(rows, q){
@@ -3676,18 +3686,10 @@ function importLocal(mode, folder){
       var added = d.added || [];
       var dup = d.dup || [];
       var failed = d.failed || [];
-      if(added.length){
-        added.forEach(function(r){
-          var f = favOfLocal(r);
-          var exists = false;
-          for(var i=0; i<state.fav.length; i++){ if(state.fav[i].k === f.k) exists = true; }
-          if(!exists) state.fav.unshift(f);
-        });
-        saveFav(); paintFavBtn(); renderFavList(); renderAutoSel();
-      }
+      /* 导入只是加进「我的导入」，不往收藏里塞：要收藏自己点星号 */
       /* 三种结果分开说清楚，别把「没导进去」说成「导入过了」 */
       var msg = [];
-      if(added.length) msg.push((added.length > 1 ? "批量导入 " : "导入 ") + added.length + " 首，已自动收藏");
+      if(added.length) msg.push((added.length > 1 ? "批量导入 " : "导入 ") + added.length + " 首");
       if(dup.length) msg.push(dup.length + " 首本来就在列表里");
       if(failed.length) msg.push(failed.length + " 首没导进来（" + (failed[0].why || "文件有问题") + "）");
       toast(msg.length ? msg.join(" · ") : "这次没选中能导入的文件");
@@ -3695,19 +3697,39 @@ function importLocal(mode, folder){
     })
     .catch(function(){ if(btn) btn.disabled = false; toast("导入失败，请重试"); });
 }
+/* 收藏 / 导入两个列表互斥：点「我的导入」时收藏先往右滑回去，导入再从右边滑进来；
+   点「我的收藏」反过来。半透明或全透明时也不会两块糊在一起。 */
+var locFromFav = false;
 function openLoc(){
   if(state.localOpen) return;
   state.localOpen = true;
+  locFromFav = !!state.favOpen;
   if(el.locSearch) el.locSearch.value = state.locQ || "";
   localFetch();
-  el.locPanel.classList.add("show");
-  el.locPanel.setAttribute("aria-hidden", "false");
+  var show = function(){
+    if(!state.localOpen) return;
+    el.locPanel.classList.add("show");
+    el.locPanel.setAttribute("aria-hidden", "false");
+  };
+  if(locFromFav){
+    el.favPanel.classList.remove("show");
+    el.favPanel.setAttribute("aria-hidden", "true");
+    setTimeout(show, 180);
+  }else show();
 }
 function closeLoc(){
   if(!state.localOpen) return;
   state.localOpen = false;
   el.locPanel.classList.remove("show");
   el.locPanel.setAttribute("aria-hidden", "true");
+  if(locFromFav && state.favOpen){
+    setTimeout(function(){
+      if(state.localOpen) return;
+      el.favPanel.classList.add("show");
+      el.favPanel.setAttribute("aria-hidden", "false");
+    }, 180);
+  }
+  locFromFav = false;
 }
 if(el.locCopy) el.locCopy.addEventListener("click", function(){ importLocal("copy"); });
 if(el.locFolder) el.locFolder.addEventListener("click", function(){ importLocal("copy", true); });
@@ -6262,6 +6284,9 @@ function shotWatchdog(){
   fetch("/bgseq?sid=" + encodeURIComponent(_shotSid), {cache:"no-store"}).then(function(r){ return r.json(); }).then(function(d){
     _wdBusy = false;
     if(!d || !_shotLive) return;
+    /* 帧数不涨（流被掐断）或者帧数是涨的但画面 stale（抓屏 DC 坏死、一直吐同一张老图）
+       两种都判死，换图重接。stale 超过 2.2 秒就重启，不会再定成一张图片。 */
+    if(typeof d.stale === "number" && d.stale > 3.5){ _wdKill(); return; }
     if(_wdN < 0){ _wdN = d.n; return; }
     if(d.n === _wdN){
       _wdStuck++;

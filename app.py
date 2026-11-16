@@ -27,7 +27,7 @@ import zipfile
 from ctypes import wintypes
 
 APP_TITLE = "Bonfire"
-APP_VER = "1.6.0"
+APP_VER = "1.6.1"
 UPDATE_API = "https://api.github.com/repos/aishangniwwww/bonfire-player/releases/latest"
 WIN_W = 300
 WIN_H = 312
@@ -1344,6 +1344,27 @@ def hard_top_loop():
             pass
 
 
+def top_guard_loop():
+    """开机还原置顶时的补丁：启动那一瞬间窗口还没彻底建好，
+    SetWindowPos(HWND_TOPMOST) 有时候会落空，界面开关却已经是「开」，
+    于是用户看到「按钮亮着、实际没置顶」，关一下再开才好。
+    这里每 0.5 秒核对一次真实状态，掉出 topmost 就重新按回去（不抢焦点）。"""
+    while True:
+        time.sleep(0.5)
+        try:
+            if not TOP.get("on"):
+                continue
+            hwnd = find_hwnd()
+            if not hwnd or user32.IsIconic(hwnd):
+                continue
+            if not is_topmost(hwnd):
+                user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
+                log_api("top guard re-apply")
+        except Exception:
+            pass
+
+
 gdi32 = ctypes.windll.gdi32
 gdi32.CreateEllipticRgn.restype = ctypes.c_void_p
 user32.SetWindowRgn.argtypes = [wintypes.HWND, ctypes.c_void_p, wintypes.BOOL]
@@ -1457,7 +1478,7 @@ BG_LOCK = threading.Lock()
 BG_STREAMS = {"n": 0}
 
 
-def _grab_excluded():
+def _grab_excluded(fresh=False):
     """排除自己 → 等 DWM 合成一帧 → 拍 → 立刻恢复。全程在锁里，避免交错。"""
     with BG_LOCK:
         hwnd = find_hwnd()
@@ -1469,13 +1490,14 @@ def _grab_excluded():
                 ctypes.windll.dwmapi.DwmFlush()   # 保证拍到的是已经合成好的画面
             except Exception:
                 pass
-            return _bg_grab()
+            return _bg_grab(fresh)
         finally:
             user32.SetWindowDisplayAffinity(hwnd, 0x00000000)
 
 
-def _bg_grab():
-    """截窗口当前那块屏幕（自己已被排除），返回 (PIL.Image, w, h)。"""
+def _bg_grab(fresh=False):
+    """截窗口当前那块屏幕（自己已被排除），返回 (PIL.Image, w, h)。
+    fresh=True 时用一套全新的 DC 拍一张就扔，专门用来验证老 DC 是不是瞎了。"""
     hwnd = find_hwnd()
     if not hwnd:
         return None
@@ -1486,9 +1508,21 @@ def _bg_grab():
         return None
     if user32.IsIconic(hwnd):
         return None
-    if GRABBER[0] is None:
-        GRABBER[0] = _FastGrab()
-    img = GRABBER[0].grab((r.left, r.top, r.right, r.bottom))
+    if fresh:
+        tmp = None
+        try:
+            tmp = _FastGrab()
+            img = tmp.grab((r.left, r.top, r.right, r.bottom))
+        finally:
+            try:
+                if tmp is not None:
+                    tmp.close()
+            except Exception:
+                pass
+    else:
+        if GRABBER[0] is None:
+            GRABBER[0] = _FastGrab()
+        img = GRABBER[0].grab((r.left, r.top, r.right, r.bottom))
     if img is None:
         return None
     return img, w, h
@@ -1560,7 +1594,7 @@ BG_LUMA = {"mean": None, "stable": 0, "bad": 0}
 # 抓屏用的兼容 DC 会「坏死」：GetDIBits 还照样返回，但拿回来的是同一张老图，
 # 屏幕上就是毛玻璃定在一张图片上不动了（切一次悬浮球会重建窗口，就又能动）。
 # 这里记一下连续一模一样的帧有多久了，卡太久就把 grabber 整个重建一次，自愈。
-BG_SIG = {"key": None, "since": 0.0, "rebuild": 0.0}
+BG_SIG = {"key": None, "since": 0.0, "rebuild": 0.0, "probe": 0.0}
 BG_GRAB_FAIL = {"n": 0}
 
 
@@ -1586,6 +1620,7 @@ def _reset_grabber(why=""):
     BG_SIG["key"] = None
     BG_SIG["since"] = 0.0
     BG_SIG["rebuild"] = time.time()
+    BG_SIG["probe"] = 0.0
     if why:
         log_api("bg grabber rebuild (%s)" % why)
 
@@ -1623,17 +1658,23 @@ def bg_frame_jpeg(quality=62):
             if k is not None and k == BG_SIG["key"]:
                 if not BG_SIG["since"]:
                     BG_SIG["since"] = now
-                    if not BG_SIG["rebuild"]:
-                        BG_SIG["rebuild"] = now
-                elif now - BG_SIG["since"] > 25.0 and now - BG_SIG["rebuild"] > 30.0:
-                    _reset_grabber("画面长时间不动 %.1fs/%.1fs" % (now - BG_SIG["since"], now - BG_SIG["rebuild"]))
-                    got = _grab_excluded()
-                    if not got:
-                        return None
-                    img = got[0]
-                    k = _sig(img)
-                    BG_SIG["key"] = k
-                    BG_SIG["since"] = time.time()
+                elif now - BG_SIG["since"] > 1.6 and now - BG_SIG.get("probe", 0) > 2.2:
+                    # 同一张画面停了 1.6 秒：拿一套全新的 DC 再拍一张来对比。
+                    # 新 DC 拍到的跟老 DC 不一样 → 老 DC 瞎了（毛玻璃定成静态图），
+                    # 直接换掉并改用这张新画面；一样 → 屏幕是真没动，
+                    # 那就把 stale 清零，别每三秒白重建一次、也别让页面误判。
+                    BG_SIG["probe"] = now
+                    probe = _grab_excluded(fresh=True)
+                    pk = _sig(probe[0]) if probe else None
+                    if pk is not None and pk != k:
+                        _reset_grabber("抓屏 DC 瞎了（新 DC 拍到的画面已变）")
+                        got = probe
+                        img = got[0]
+                        k = pk
+                        BG_SIG["key"] = k
+                        BG_SIG["since"] = 0.0
+                    else:
+                        BG_SIG["since"] = now
             else:
                 BG_SIG["key"] = k
                 BG_SIG["since"] = 0.0
@@ -1957,6 +1998,14 @@ def set_ball(on, css_h=0, css_w=0):
 def resize_to(css_h):
     """页面报 CSS 内容高度；用宽度差补 DPI 缩放（高度心跳有滞后，不能用）"""
     if BALL["on"]:
+        return None
+    try:
+        css_h = int(float(css_h))
+    except Exception:
+        return None
+    # 页面在重排的瞬间会报 0，按 0 算会被夹到最小高度 180，
+    # 紧接着页面报回 292 又弹回 219，一秒抖两次、白烧 CPU、还可能闪一下黑。
+    if css_h <= 0:
         return None
     hwnd = find_hwnd()
     if not hwnd:
@@ -4109,7 +4158,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if path == "/bgseq":
             sid = (qs.get("sid") or [""])[0][:32]
             n = BG_REAL.get("byid", {}).get(sid) if sid else BG_REAL.get("seq", 0)
+            # stale：这一帧跟上一帧一模一样的秒数。页面拿它当「画面已经不动了」的判据
+            # （抓屏 DC 坏死时帧数还在涨，光看 seq 是看不出来的）。
+            since = BG_SIG.get("since") or 0.0
+            stale = (time.time() - since) if since else 0.0
             send_json(self, {"n": n if n is not None else 0,
+                             "stale": round(stale, 2),
                              "last": round(BG_REAL.get("last", 0), 3)})
             return
 
@@ -4626,6 +4680,7 @@ def main():
     threading.Thread(target=watch_loop, daemon=True).start()
     threading.Thread(target=bg_loop, daemon=True).start()
     threading.Thread(target=hard_top_loop, daemon=True).start()
+    threading.Thread(target=top_guard_loop, daemon=True).start()
     if MULTI["on"]:
         # 多开时各用各的 WebView2 数据目录，否则第二个实例会被同一个 profile 卡住
         webview.start(debug=False, private_mode=False,
