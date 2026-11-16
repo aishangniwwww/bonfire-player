@@ -3950,20 +3950,22 @@ if(el.locCrumb){
       renderLocList();
       return;
     }
-    var best = "";
+    /* 点面包屑要跳到「这一层」，不是跳到它下面最深的那一层。
+       以前取的是「前缀匹配里最长的那个 dir」，于是点「已下载音乐」会直接
+       钻到某个 G.E.M.邓紫棋 子文件夹里，再点一次又因为已经在那儿而没反应。 */
+    var low = p.toLowerCase(), hit = "";
     (state.local || []).forEach(function(r){
+      if(hit) return;
       var d = r.dir || "";
-      if(!d) return;
-      if(d.toLowerCase().indexOf(p.toLowerCase()) === 0 && d.length > best.length) best = d;
+      if(d && d.toLowerCase().indexOf(low) === 0) hit = d.slice(0, p.length);
     });
-    if(best){
-      state.locDir = best;
-      state.locQ = ""; if(el.locSearch) el.locSearch.value = "";
-      renderLocList();
-    }else{
-      state.locDir = "";
-      renderLocList();
+    if(!hit){
+      /* 目录里一首歌都没有（空的子文件夹）也认，保持用户点的层级 */
+      hit = p;
     }
+    state.locDir = hit;
+    state.locQ = ""; if(el.locSearch) el.locSearch.value = "";
+    renderLocList();
   });
 }
 if(el.foldModeSwitch){
