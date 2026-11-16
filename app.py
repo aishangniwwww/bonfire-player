@@ -20,6 +20,7 @@ import subprocess
 import socket
 import threading
 import time
+import uuid
 import urllib.parse
 import urllib.request
 import zipfile
@@ -27,7 +28,7 @@ import zipfile
 from ctypes import wintypes
 
 APP_TITLE = "Bonfire"
-APP_VER = "1.6.1"
+APP_VER = "1.6.3"
 UPDATE_API = "https://api.github.com/repos/aishangniwwww/bonfire-player/releases/latest"
 WIN_W = 300
 WIN_H = 312
@@ -155,8 +156,94 @@ def dl_dir():
     return DATA_DIR
 
 
+class _GUID(ctypes.Structure):
+    _fields_ = [("Data1", ctypes.c_uint32), ("Data2", ctypes.c_uint16),
+                ("Data3", ctypes.c_uint16), ("Data4", ctypes.c_ubyte * 8)]
+
+
+def _guid(txt):
+    v = txt.strip("{}").replace("-", "")
+    g = _GUID()
+    g.Data1 = int(v[0:8], 16)
+    g.Data2 = int(v[8:12], 16)
+    g.Data3 = int(v[12:16], 16)
+    for i in range(8):
+        g.Data4[i] = int(v[16 + i * 2:18 + i * 2], 16)
+    return g
+
+
+def _com_call(ptr, idx, restype, *argtypes):
+    """按 vtable 下标调 COM 方法（ctypes 手搓，省得为这个装 comtypes）"""
+    vt = ctypes.cast(ptr, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))[0]
+    proto = ctypes.WINFUNCTYPE(restype, ctypes.c_void_p, *argtypes)
+    return proto(vt[idx])
+
+
+def _com_release(ptr):
+    try:
+        _com_call(ptr, 2, ctypes.c_ulong)(ptr)
+    except Exception:
+        pass
+
+
+def pick_folder_native(title="选择下载目录", hwnd=None):
+    """资源管理器风格的文件夹选择框（IFileOpenDialog）。
+    老的 SHBrowseForFolder 是那个又矮又记不住尺寸的方框，用户拉大还会被
+    弹回原尺寸；换成系统「打开文件夹」对话框，能拖动改变大小、位置也记得住。"""
+    ole32 = ctypes.windll.ole32
+    co_inited = False
+    p_dialog = ctypes.c_void_p(0)
+    p_item = ctypes.c_void_p(0)
+    try:
+        if ole32.CoInitializeEx(None, 0x2) >= 0:      # STA
+            co_inited = True
+        clsid = _guid("{DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7}")   # CLSID_FileOpenDialog
+        iid = _guid("{d57c7288-d4ad-4768-be02-9d969532d960}")     # IID_IFileOpenDialog
+        hr = ole32.CoCreateInstance(ctypes.byref(clsid), None, 0x1,
+                                    ctypes.byref(iid), ctypes.byref(p_dialog))
+        if hr < 0 or not p_dialog:
+            return None
+        FOS_PICKFOLDERS, FOS_FORCEFILESYSTEM, FOS_PATHMUSTEXIST = 0x20, 0x40, 0x800
+        _com_call(p_dialog, 9, ctypes.c_long, ctypes.c_uint)(
+            p_dialog, FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST)
+        if title:
+            _com_call(p_dialog, 17, ctypes.c_long, ctypes.c_wchar_p)(p_dialog, title)
+        owner = hwnd or find_hwnd()
+        if _com_call(p_dialog, 3, ctypes.c_long, ctypes.c_void_p)(p_dialog, owner) != 0:
+            return ""                                  # 用户取消
+        if _com_call(p_dialog, 20, ctypes.c_long, ctypes.POINTER(ctypes.c_void_p))(
+                p_dialog, ctypes.byref(p_item)) != 0 or not p_item:
+            return ""
+        out = ctypes.c_wchar_p()
+        SIGDN_FILESYSPATH = 0x80058000
+        if _com_call(p_item, 5, ctypes.c_long, ctypes.c_uint,
+                     ctypes.POINTER(ctypes.c_wchar_p))(p_item, SIGDN_FILESYSPATH,
+                                                      ctypes.byref(out)) != 0:
+            return None
+        path = out.value or ""
+        ole32.CoTaskMemFree(out)
+        return path
+    except Exception as e:
+        log_api("pick_folder_native fail %r" % e)
+        return None
+    finally:
+        if p_item:
+            _com_release(p_item)
+        if p_dialog:
+            _com_release(p_dialog)
+        if co_inited:
+            try:
+                ole32.CoUninitialize()
+            except Exception:
+                pass
+
+
 def pick_folder(title="选择下载目录"):
-    """Win32 目录选择框（不依赖 tkinter / Qt，独立线程里调用不卡界面）"""
+    """统一的目录选择入口：先试资源管理器风格的原生对话框，失败再退回老式方框。
+    用户在原生框里点「取消」也算选择结束，不能接着弹老框。"""
+    got = pick_folder_native(title)
+    if got is not None:
+        return got
     try:
         shell32 = ctypes.windll.shell32
         ole32 = ctypes.windll.ole32
@@ -878,6 +965,7 @@ def show_main():
     """托盘「显示主界面」"""
     try:
         w = WINDOW["w"]
+        WINHIDE["hold"] = False
         w.show()
         try:
             w.on_top = bool(load_state().get("on_top"))
@@ -1075,6 +1163,8 @@ except Exception:
 # 连别的置顶窗口（看视频、抖音）都压不下去。现在只认本次运行里手动开的那一下，
 # 启动一律不恢复，避免开机就赖在最上层。
 TOP = {"on": bool(_ST.get("on_top")), "hard": False}
+# 程序自己主动藏窗口（收进托盘）时把 hold 打开，置顶守卫就别再把它拉回来
+WINHIDE = {"hold": False}
 WOPT = {"ball_snap": bool(_ST.get("ball_snap", True)),
         "win_keep": bool(_ST.get("win_keep", True)),
         "ball_top": bool(_ST.get("ball_top", True)),
@@ -1098,6 +1188,9 @@ HB = {}
 HB_LOCK = threading.Lock()
 HB_SCALE = [0.0]
 HB_COUNT = [0]
+# 只有本程序自己的 WebView2 能上报心跳 / 触发改高度；别的浏览器（在浏览器里
+# 手输 127.0.0.1:8777 看一眼）报上来的窗口尺寸会把缩放比算歪，把窗口缩成半截。
+WIN_TOK = {"v": ""}
 KG_CACHE = {}
 
 
@@ -1322,6 +1415,47 @@ def _topmost_above(hwnd):
     return False
 
 
+def _desktop_shown():
+    """Win+D 之后前台会落到桌面那一层（WorkerW / Progman / SHELLDLL_DefView）"""
+    try:
+        fg = user32.GetForegroundWindow()
+        if not fg:
+            return False
+        buf = ctypes.create_unicode_buffer(64)
+        user32.GetClassNameW(fg, buf, 64)
+        return buf.value in ("WorkerW", "Progman", "SHELLDLL_DefView")
+    except Exception:
+        return False
+
+
+_RESCUE_LOG = {"t": 0.0}
+
+
+def _rescue_hidden(hwnd):
+    """被 Win+D 藏掉 / 被最小化时悄悄拉回来（不抢焦点）。
+    开机那一瞬 SetWindowPos(HWND_TOPMOST) 有时没真落地，界面图标却已经是「开」，
+    这时按 Win+D 就会把这个还处在普通层的窗口一起藏起来；之后再补置顶也拉不回
+    一个已经隐藏的窗口，于是用户看到「置顶开着却被藏了」。这里补上恢复动作。"""
+    if WINHIDE.get("hold"):
+        return False
+    try:
+        if user32.IsWindowVisible(hwnd) and not user32.IsIconic(hwnd) \
+                and not _desktop_shown():
+            return False
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, 9)      # SW_RESTORE：最小化过的窗口只能靠它还原
+        else:
+            user32.ShowWindow(hwnd, 8)      # SW_SHOWNOACTIVATE
+        user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
+        if time.time() - _RESCUE_LOG["t"] > 5:
+            _RESCUE_LOG["t"] = time.time()
+            log_api("top guard re-show")
+        return True
+    except Exception:
+        return False
+
+
 def hard_top_loop():
     """置顶最高：真的往 topmost 那层的最上面压，不抢焦点。
     以前只在「自己已经是前台」时才顶，别的东西（抖音这种自己也 topmost 的窗口）
@@ -1334,7 +1468,9 @@ def hard_top_loop():
             continue
         try:
             hwnd = find_hwnd()
-            if not hwnd or user32.IsIconic(hwnd):
+            if not hwnd:
+                continue
+            if _rescue_hidden(hwnd):
                 continue
             if is_topmost(hwnd) and not _topmost_above(hwnd):
                 continue          # 已经在最上面，别白刷
@@ -1355,7 +1491,9 @@ def top_guard_loop():
             if not TOP.get("on"):
                 continue
             hwnd = find_hwnd()
-            if not hwnd or user32.IsIconic(hwnd):
+            if not hwnd:
+                continue
+            if _rescue_hidden(hwnd):
                 continue
             if not is_topmost(hwnd):
                 user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
@@ -1373,22 +1511,6 @@ user32.SetWindowRgn.argtypes = [wintypes.HWND, ctypes.c_void_p, wintypes.BOOL]
 BG_REAL = {"last": 0.0, "raw": None, "rect": None, "cache": {}, "fail": 0, "warned": False,
            "seq": 0}
 SHOT_INTERVAL = 0.22
-
-
-def _bg_mark():
-    BG_REAL["last"] = time.time()
-
-
-def set_shot_affinity(hwnd):
-    """让这个窗口不出现在屏幕截图里（WDA_EXCLUDEFROMCAPTURE），
-    这样我们截「它后面那块屏幕」时不会被自己的窗户挡住。Win10 2004+ 才有。"""
-    try:
-        ok = user32.SetWindowDisplayAffinity(hwnd, 0x00000011)
-        log_api("shot affinity=%s" % ok)
-        return bool(ok)
-    except Exception as e:
-        log_api("shot affinity fail %r" % e)
-        return False
 
 
 class _FastGrab:
@@ -2016,7 +2138,11 @@ def resize_to(css_h):
     # 只认第一次测出来的缩放比，之后不再改：页面回报的 innerWidth 会随着
     # 窗口尺寸/滚动条来回变，拿它算比例会自己喂自己，292↔214 每秒抖。
     if not HB_SCALE[0] and inner_w > 0 and w > 0:
-        HB_SCALE[0] = max(0.75, min(2.0, float(w) / inner_w))
+        # 窗口物理宽 / 页面 CSS 宽 = 系统缩放比。缩到 1 以下说明来路不对
+        # （老版本被浏览器的心跳污染过，量出 0.58，把窗口缩成半截），直接不用。
+        ratio = float(w) / inner_w
+        if 0.95 <= ratio <= 3.0:
+            HB_SCALE[0] = ratio
     target = max(180, min(1200, int(round(int(css_h) * (HB_SCALE[0] or 1.0)))))
     # 页面报的高度在 285/292 之间来回跳 7px（里面某块会因为视口高度变化
     # 挤出不挤出滚动条），容差放到 8 就不会自己喂自己抖半截
@@ -3810,6 +3936,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
 
         if path == "/hb":
+            if (qs.get("tok") or [""])[0] != WIN_TOK["v"]:
+                send_json(self, {"ok": False, "why": "foreign client"})
+                return
             with HB_LOCK:
                 HB.update({
                     "t": (qs.get("t") or [""])[0],
@@ -4241,6 +4370,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
 
         if path == "/resize":
+            # 只认自己窗口发来的高度；别的浏览器打开页面也会调这个，会把窗口缩歪
+            if (qs.get("tok") or [""])[0] != WIN_TOK["v"]:
+                send_json(self, {"ok": False, "why": "foreign client"})
+                return
             h = (qs.get("h") or ["0"])[0]
             try:
                 got = resize_to(int(float(h)))
@@ -4472,6 +4605,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             # 页面右上角那个 × ：按「窗口 · 关闭」的设置走
             if tray_bg():
                 try:
+                    WINHIDE["hold"] = True
                     WINDOW["w"].hide()
                 except Exception as e:
                     log_api("xclose hide fail %r" % e)
@@ -4618,7 +4752,9 @@ def main():
     if srv is None:
         raise SystemExit("本地端口起不来")
     port = srv.server_address[1]
-    url = "http://127.0.0.1:%d/index.html?v=%d" % (port, int(time.time()))
+    WIN_TOK["v"] = uuid.uuid4().hex[:10]
+    url = "http://127.0.0.1:%d/index.html?v=%d&tok=%s" % (port, int(time.time()),
+                                                         WIN_TOK["v"])
 
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     if args:
@@ -4639,6 +4775,7 @@ def main():
             return True
         if CLOSE_BG["on"]:
             try:
+                WINHIDE["hold"] = True      # 主动收进托盘，别让置顶守卫又拉回来
                 win.hide()
             except Exception as e:
                 log_api("hide fail %r" % e)

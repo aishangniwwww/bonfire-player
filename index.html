@@ -1607,6 +1607,13 @@ var LANG_RTL = { ar: 1, he: 1, khar: 1 };
 var LANG_RISK = { lis: 1, os: 1, otk: 1, khar: 1, cpr: 1 };
 var LANG_FONT = { lis: "Lisu", os: "Osage", otk: "Old Turkic", khar: "Kharoshthi", cpr: "Cypriot" };
 
+/* 只有本程序自己的窗口带着这个口令，心跳/改高度才被后端认账；
+   靠它挡住"顺手在浏览器里打开 8777 看一眼"把窗口尺寸带歪 */
+var TOK = (function(){
+  var m = /[?&]tok=([A-Za-z0-9]+)/.exec(location.search || "");
+  return m ? m[1] : "";
+})();
+
 var state = {
   rows: DEFAULT_ROWS.slice(), idx: 0, total: 0, deadCount: 0, dragging: false,
   playing: false, srcs: [], si: 0, rate: 1, folded: true, topOn: false,
@@ -2718,7 +2725,7 @@ el.list.addEventListener("click", function(e){
   if(!row || row.dataset.i === undefined) return;
   state.deadCount = 0;
   var i = parseInt(row.dataset.i, 10);
-  playRow(i, true);
+  playRowClear(i, true);
   setView("main", true);
 });
 
@@ -3166,27 +3173,26 @@ function renderFavList(){
   if(!hit) h = '<div class="empty-row">没找到「' + esc(state.favQ) + '」，换个词试试。</div>';
   el.favList.innerHTML = h;
 }
+function favRowOf(f){
+  return { name: f.name, artist: f.artist, cover: f.cover, dur: f.dur, collect: f.collect,
+           hash: f.hash, ids: (f.ids || []).slice(), url: f.url || "", rid: f.rid || "",
+           src: f.src || "", local: !!f.local, lid: f.lid || 0 };
+}
 function playFav(i){
   var f = state.fav[i];
   if(!f) return;
-  var row = { name: f.name, artist: f.artist, cover: f.cover, dur: f.dur, collect: f.collect,
-              hash: f.hash, ids: (f.ids || []).slice(), url: f.url || "", rid: f.rid || "",
-              src: f.src || "", local: !!f.local, lid: f.lid || 0 };
-  var found = -1;
-  for(var n=0; n<state.rows.length; n++){
-    if(favKeyOf(state.rows[n]) === f.k){ found = n; break; }
-  }
-  if(found > -1){
-    playRow(found, true);
-  }else{
-    state.rows.unshift(row);
-    state.idx = 0;
-    state.srcs = [];
-    state.si = 0;
-    renderFrames();
-    renderList(state.total);
-    playRow(0, true);
-  }
+  /* 队列：按「我的收藏」当前显示顺序（有搜索词就是筛过的那一份），
+     点中的那首为起点，播到最底下再回最上面；只剩一首就是单曲循环。 */
+  var q = (state.favQ || "").trim().toLowerCase();
+  var list = [], at = 0, n = 0;
+  state.fav.forEach(function(x){
+    if(!favHit(x, q)) return;
+    if(favKeyOf(x) === favKeyOf(f)) at = n;
+    list.push(favRowOf(x));
+    n++;
+  });
+  if(!list.length){ list = [favRowOf(f)]; at = 0; }
+  playQueue(list, list[at]);
   closeFav();
   setView("main", true);
 }
@@ -3364,6 +3370,7 @@ function renderLocList(){
   var q = (state.locQ || "").trim().toLowerCase();
   if(!rows.length){
     el.locList.innerHTML = '<div class="empty-row">还没有导入歌曲，去设置里点「导入到软件」或「导入为链接」。</div>';
+    state.locVis = [];
     paintCrumb("");
     return;
   }
@@ -3374,10 +3381,11 @@ function renderLocList(){
     renderLocFolderList(rows, q);
     return;
   }
-  var h = "", hit = 0;
+  var h = "", hit = 0, vis = [];
   rows.forEach(function(r, i){
     if(q && (r.name || "").toLowerCase().indexOf(q) < 0) return;
     hit++;
+    vis.push(r);
     h += '<div class="row" data-l="' + i + '">'
       + '<span class="cov">' + (r.cover ? '<img src="' + esc(r.cover) + '" alt="">' : "♪") + '</span>'
       + '<div class="txt"><div class="nm">' + esc(r.name || "未命名") + '</div>'
@@ -3388,20 +3396,23 @@ function renderLocList(){
   });
   if(!hit) h = '<div class="empty-row">导入列表里没找到「' + esc(state.locQ) + "」，换个词试试。</div>";
   el.locList.innerHTML = h;
+  state.locVis = vis;          /* 平铺模式：点开的歌按当前这份可见列表往下播 */
   paintCrumb("");
 }
 /* ===== 文件夹模式下的搜索：跨所有子文件夹找歌 ===== */
 function renderLocSearch(rows, q){
-  var h = "", hit = 0;
+  var h = "", hit = 0, vis = [];
   rows.forEach(function(r, i){
     var folder = dirBase(dirDir(r) || "") || "";
     if((r.name || "").toLowerCase().indexOf(q) < 0 &&
        folder.toLowerCase().indexOf(q) < 0) return;
     hit++;
+    vis.push(r);
     h += locSongRow(r, i, folder ? ("在 " + folder) : "");
   });
   if(!hit) h = '<div class="empty-row">导入库里没找到「' + esc(state.locQ) + "」，换个词试试。</div>";
   el.locList.innerHTML = h;
+  state.locVis = vis;          /* 搜索命中就只在命中结果里循环 */
   paintCrumb("");
 }
 /* ===== 文件夹模式：导入的文件夹在列表里占一行，点开才看到里面的歌 ===== */
@@ -3481,7 +3492,7 @@ function foldIcon(){
 }
 function renderLocFolderList(rows, q){
   var cur = state.locDir || "";
-  var h = "", hit = 0, i;
+  var h = "", hit = 0, i, vis = [];
   if(!cur){
     /* 第一层：一个导入目录一行（点进去才看里面的子文件夹和歌） */
     var roots = {}, order = [], loose = [];
@@ -3509,10 +3520,12 @@ function renderLocFolderList(rows, q){
       var r = rows[i2];
       if(q && (r.name || "").toLowerCase().indexOf(q) < 0) return;
       hit++;
+      vis.push(r);
       h += locSongRow(r, i2, "");
     });
     if(!hit) h = '<div class="empty-row">' + (q ? ("没找到「" + esc(state.locQ) + "」") : "还没有导入文件夹，去设置里点「导入文件夹」。") + '</div>';
     el.locList.innerHTML = h;
+    state.locVis = vis;        /* 根目录下散着的歌：就在这一层循环 */
     paintCrumb("");
     return;
   }
@@ -3548,10 +3561,12 @@ function renderLocFolderList(rows, q){
     var r = rows[k];
     if(q && (r.name || "").toLowerCase().indexOf(q) < 0) return;
     hit++;
+    vis.push(r);
     h += locSongRow(r, k, "在这个文件夹里");
   });
   if(!hit) h = '<div class="empty-row">' + (q ? ("这个文件夹里没找到「" + esc(state.locQ) + "」") : "这个文件夹里没有歌了。") + '</div>';
   el.locList.innerHTML = h;
+  state.locVis = vis;          /* 文件夹模式：只在本层这些歌里循环 */
   paintCrumb(cur);
 }
 function locSongRow(r, idx, sub){
@@ -3919,19 +3934,15 @@ if(el.locList){
   });
 }
 function playLocal(r){
+  /* 队列：跟着「我的导入」当前这份可见列表走
+     —— 平铺模式=整个可见列表，文件夹模式=本文件夹里的歌，搜索=命中的歌 */
+  var vis = (state.locVis && state.locVis.length) ? state.locVis : [r];
+  var list = vis.map(function(x){ return localRowOf(x); });
   var row = localRowOf(r);
-  var found = -1;
-  for(var i=0; i<state.rows.length; i++){
-    if(state.rows[i].local && state.rows[i].lid === r.id){ found = i; break; }
-  }
-  if(found < 0){
-    state.rows.unshift(row);
-    state.idx = 0;
-    renderFrames(); renderList(state.total);
-  }else{
-    state.idx = found;
-  }
-  playRow(state.idx, true);
+  if(!list.length) list = [row];
+  var at = 0;
+  for(var k=0; k<list.length; k++){ if(list[k].lid === r.id) { at = k; break; } }
+  playQueue(list, list[at]);
   closeLoc(); closeFav();
   setView("main", true);
 }
@@ -4496,6 +4507,57 @@ function hardFail(){
   nextDead();
 }
 
+/* ============ 播放队列：从收藏 / 导入点歌后按那份列表顺序走 ============ */
+/* state.queue 非空时，「下一首 / 播完自动续」只在队列里转，转完回到队头；
+   队列只剩一首就原地循环。主列表点歌、搜索结果点歌会把队列清掉，回到老逻辑。 */
+function rowKeyOf(r){
+  if(!r) return "";
+  if(r.local && r.lid) return "local#" + r.lid;
+  return favKeyOf(r);
+}
+function qIndexOf(list, row){
+  if(!list || !row) return -1;
+  var k = rowKeyOf(row);
+  if(!k) return -1;
+  for(var i=0; i<list.length; i++){ if(rowKeyOf(list[i]) === k) return i; }
+  return -1;
+}
+function playTrack(row){
+  if(!row) return;
+  var idx = qIndexOf(state.rows, row);
+  if(idx < 0){
+    state.rows.unshift(row);
+    state.idx = 0;
+    state.srcs = []; state.si = 0;
+    renderFrames();
+    renderList(state.total);
+    idx = 0;
+  }
+  playRow(idx, true);
+}
+function playQueue(list, row){
+  state.queue = (list && list.length) ? list.slice() : null;
+  playTrack(row || (state.queue ? state.queue[0] : null));
+}
+function queueStep(dir){
+  if(!state.queue || !state.queue.length) return null;
+  var n = state.queue.length;
+  var at = qIndexOf(state.queue, state.rows[state.idx]);
+  if(at < 0) at = 0;
+  at = ((at + dir) % n + n) % n;
+  return state.queue[at];
+}
+function playStep(dir){
+  var row = queueStep(dir);
+  if(row) playTrack(row);
+  else playRow(state.idx + dir, true);
+}
+/* 主列表 / 搜索结果点歌：清掉队列，按主列表顺序往下走 */
+function playRowClear(i, autoplay){
+  state.queue = null;
+  playRow(i, autoplay);
+}
+
 function playRow(i, autoplay){
   if(!state.rows.length) return;
   var n = state.rows.length;
@@ -4637,6 +4699,14 @@ audio.addEventListener("ended", function(){
     attemptPlay();
     return;
   }
+  /* 队列里只剩一首 → 原地单曲循环（收藏只有一首、文件夹里只有一首都走这里） */
+  if(state.queue && state.queue.length === 1){
+    audio.currentTime = 0;
+    attemptPlay();
+    return;
+  }
+  var nxt = queueStep(1);
+  if(nxt){ playTrack(nxt); return; }
   if(state.rows.length > 1) playRow(state.idx + 1, true);
   else setPlaying(false);
 });
@@ -5025,10 +5095,10 @@ el.btnPlay.addEventListener("click", function(){
     audio.pause();
   }
 });
-el.btnPrev.addEventListener("click", function(){ state.deadCount = 0; playRow(state.idx - 1, true); });
+el.btnPrev.addEventListener("click", function(){ state.deadCount = 0; playStep(-1); });
 /* 点唱片机 = 播放/暂停 */
 el.platter.addEventListener("click", function(){ openFav(); });
-el.btnNext.addEventListener("click", function(){ state.deadCount = 0; playRow(state.idx + 1, true); });
+el.btnNext.addEventListener("click", function(){ state.deadCount = 0; playStep(1); });
 el.btnBack.addEventListener("click", function(){ setView("main"); });
 el.btnRate.addEventListener("click", function(e){
   e.stopPropagation();
@@ -5167,7 +5237,7 @@ function syncHeight(){
   if(!shellOn) return;
   var h = Math.ceil(el.win.getBoundingClientRect().height);
   if(!h || h < 120) h = 120;
-  fetch("/resize?h=" + h, {cache:"no-store"}).catch(function(){});
+  fetch("/resize?h=" + h + (TOK ? "&tok=" + TOK : ""), {cache:"no-store"}).catch(function(){});
 }
 
 /* ================= 优化页 ================= */
@@ -5722,7 +5792,7 @@ function search(q, autoplay, note, gotoList){
       + (hasCl ? " · 收藏量取酷狗" : "")
       + (qqLive ? " · QQ 直连 " + qqLive + " 首" : "")
       + (auth ? " · " + (SRC_LABEL[wantSrc] || wantSrc) + " · 同名可播版本" : "");
-    if(autoplay) playRow(0, true);
+    if(autoplay) playRowClear(0, true);
     if(auth) toast((SRC_LABEL[wantSrc] || wantSrc) + "：" + auth + " · 已自动用能播的音源");
     else if(!hasCl) toast("收藏数没取到，排序按平台默认热度");
     if(gotoList) setView("list", true);
@@ -6725,7 +6795,8 @@ function searchOpacity(){
   var busy = false;
   function hb(){
     try{
-      var q = "?t=" + encodeURIComponent(el.title.textContent || "")
+      var q = "?tok=" + TOK
+        + "&t=" + encodeURIComponent(el.title.textContent || "")
         + "&n=" + document.querySelectorAll("#list .row").length
         + "&m=" + encodeURIComponent(el.listMeta.textContent || "")
         + "&b=" + encodeURIComponent(state.topOn ? "pinned" : "pin")
@@ -6833,8 +6904,8 @@ function searchOpacity(){
           else if(c === "__mode_single") setMode("single");
           else if(c === "__mode_order") setMode("order");
           else if(c === "__rate_menu") openRateMenu();
-          else if(c === "__next_song") playRow(state.idx + 1, true);
-          else if(c === "__prev_song") playRow(state.idx - 1, true);
+          else if(c === "__next_song") playStep(1);
+          else if(c === "__prev_song") playStep(-1);
           else if(c === "__play_now") attemptPlay();
           else if(c === "__pause_now") audio.pause();
           else if(c === "__search_list") search(el.q.value, false, null, true);
@@ -6852,7 +6923,7 @@ function searchOpacity(){
           else if(c === "__qq_play"){
             var qi = state.rows.findIndex(function(r){ return r.qqId && r.url; });
             if(qi < 0) toast("列表里没有可直连的 QQ 曲目");
-            else playRow(qi, true);
+            else playRowClear(qi, true);
           }
           else if(c === "__close_help") closeHelp();
           else if(c.indexOf("__sort_") === 0) setSort(c.slice(7));
