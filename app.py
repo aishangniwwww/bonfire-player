@@ -28,7 +28,7 @@ import zipfile
 from ctypes import wintypes
 
 APP_TITLE = "Bonfire"
-APP_VER = "1.6.3"
+APP_VER = "1.6.4"
 UPDATE_API = "https://api.github.com/repos/aishangniwwww/bonfire-player/releases/latest"
 WIN_W = 300
 WIN_H = 312
@@ -238,6 +238,217 @@ def pick_folder_native(title="选择下载目录", hwnd=None):
                 pass
 
 
+# ---------- 原生文件多选框（IFileOpenDialog）：资源管理器风格、能拉大、尺寸记得住 ----------
+PICKDLG_SZ = os.path.join(DATA_DIR, "pickdlg.json")
+_PICK_SZ_LOCK = threading.Lock()
+
+
+def _pick_sz_load():
+    try:
+        with open(PICKDLG_SZ, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        w, h = int(d.get("w") or 0), int(d.get("h") or 0)
+        if w >= 640 and h >= 420:
+            return (w, h)
+    except Exception:
+        pass
+    return None
+
+
+def _pick_sz_save(w, h):
+    if w < 640 or h < 420:
+        return
+    try:
+        with _PICK_SZ_LOCK:
+            with open(PICKDLG_SZ, "w", encoding="utf-8") as f:
+                json.dump({"w": int(w), "h": int(h)}, f)
+    except Exception:
+        pass
+
+
+def _pick_dialog_watch(title, pid, stop):
+    """盯着这个原生框：先把上次的宽高套回去，用户再拉大就记下来。
+    对话框自己没有「设尺寸」的接口，只能在窗口这一层补，不然每次都是那个矮条。"""
+    user32 = ctypes.windll.user32
+    found = []
+    last = [0, 0]
+    applied = False
+    applied_sz = [0, 0]
+    end = time.time() + 300
+
+    def _hit(hwnd, lp):
+        try:
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            cls = ctypes.create_unicode_buffer(64)
+            user32.GetClassNameW(hwnd, cls, 64)
+            if cls.value != "#32770":
+                return True
+            p = ctypes.c_ulong()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(p))
+            if p.value != pid:
+                return True
+            t = ctypes.create_unicode_buffer(512)
+            user32.GetWindowTextW(hwnd, t, 512)
+            if title and t.value.strip() != title.strip():
+                return True
+            found.append(hwnd)
+        except Exception:
+            pass
+        return False
+
+    cb = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)(_hit)
+    watched = [0]
+    miss = [0]
+    while time.time() < end and not stop.is_set():
+        found.clear()
+        try:
+            user32.EnumWindows(cb, 0)
+        except Exception:
+            return
+        hwnd = 0
+        if found:
+            hwnd = found[0]
+        elif watched[0] and user32.IsWindow(watched[0]):
+            hwnd = watched[0]            # 只是这一瞬没枚举到，窗口还在，别急着收工
+        if hwnd:
+            watched[0] = hwnd
+            miss[0] = 0
+            if not applied:
+                # 等窗口把默认尺寸铺完再套，不然会和系统抢，还容易覆盖用户刚拉的那一下
+                time.sleep(0.35)
+            r = wintypes.RECT()
+            user32.GetWindowRect(hwnd, ctypes.byref(r))
+            w, h = r.right - r.left, r.bottom - r.top
+            if not applied:
+                sz = _pick_sz_load()
+                if sz and w > 0:
+                    user32.SetWindowPos(hwnd, 0, r.left, r.top, sz[0], sz[1],
+                                        0x0002 | 0x0004 | 0x0010)
+                    w, h = sz
+                applied_sz[0], applied_sz[1] = w, h
+                applied = True
+                log_api("pickdlg apply %dx%d" % (w, h))
+            # 只记「和套进去那个尺寸不一样」的，说明是用户自己拉的；
+            # 不然窗口还没铺开就被关掉，会把默认尺寸存进去，一次比一次矮
+            if w > 0 and h > 0 and applied_sz[0] and (w, h) != (applied_sz[0], applied_sz[1]):
+                last[0], last[1] = w, h
+        else:
+            miss[0] += 1
+            if applied and miss[0] >= 3:
+                if last[0]:
+                    log_api("pickdlg save(user) %dx%d" % (last[0], last[1]))
+                    _pick_sz_save(last[0], last[1])
+                elif applied_sz[0]:
+                    log_api("pickdlg save(keep) %dx%d" % (applied_sz[0], applied_sz[1]))
+                    _pick_sz_save(applied_sz[0], applied_sz[1])
+                return
+        time.sleep(0.25)
+
+
+def pick_files_native(title="选择要导入 Bonfire 的歌曲", hwnd=None):
+    """原生多选文件框（IFileOpenDialog）。
+    返回：选中的路径列表 / [] = 用户取消 / None = 这套接口没跑起来（交给老框兜底）"""
+    ole32 = ctypes.windll.ole32
+    co_inited = False
+    p_dialog = ctypes.c_void_p(0)
+    p_array = ctypes.c_void_p(0)
+    p_item = ctypes.c_void_p(0)
+    stop = threading.Event()
+
+    class _FS(ctypes.Structure):
+        _fields_ = [("pszName", ctypes.c_wchar_p), ("pszSpec", ctypes.c_wchar_p)]
+
+    try:
+        if ole32.CoInitializeEx(None, 0x2) >= 0:
+            co_inited = True
+        clsid = _guid("{DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7}")   # CLSID_FileOpenDialog
+        iid = _guid("{d57c7288-d4ad-4768-be02-9d969532d960}")     # IID_IFileOpenDialog
+        hr = ole32.CoCreateInstance(ctypes.byref(clsid), None, 0x1,
+                                    ctypes.byref(iid), ctypes.byref(p_dialog))
+        if hr < 0 or not p_dialog:
+            return None
+
+        FOS_ALLOWMULTISELECT, FOS_FORCEFILESYSTEM = 0x200, 0x40
+        FOS_PATHMUSTEXIST, FOS_FILEMUSTEXIST = 0x800, 0x1000
+        FOS_NODEREFERENCELINKS = 0x100000
+        _com_call(p_dialog, 9, ctypes.c_long, ctypes.c_uint)(
+            p_dialog, FOS_ALLOWMULTISELECT | FOS_FORCEFILESYSTEM
+            | FOS_PATHMUSTEXIST | FOS_FILEMUSTEXIST | FOS_NODEREFERENCELINKS)
+
+        spec = " ".join("*" + e for e in AUDIO_EXT)
+        filters = (_FS * 2)()
+        filters[0].pszName = "音频"
+        filters[0].pszSpec = spec
+        filters[1].pszName = "所有文件"
+        filters[1].pszSpec = "*.*"
+        if _com_call(p_dialog, 4, ctypes.c_long, ctypes.c_uint,
+                     ctypes.POINTER(_FS))(p_dialog, 2, filters) < 0:
+            return None
+        _com_call(p_dialog, 5, ctypes.c_long, ctypes.c_uint)(p_dialog, 1)
+        if title:
+            _com_call(p_dialog, 17, ctypes.c_long, ctypes.c_wchar_p)(p_dialog, title)
+
+        try:
+            threading.Thread(target=_pick_dialog_watch,
+                             args=(title, os.getpid(), stop), daemon=True).start()
+        except Exception:
+            pass
+
+        owner = hwnd or find_hwnd()
+        hr = _com_call(p_dialog, 3, ctypes.c_long, ctypes.c_void_p)(p_dialog, owner)
+        if hr < 0:
+            if (hr & 0xFFFFFFFF) == 0x800704C7:      # ERROR_CANCELLED：用户点了取消
+                return []
+            log_api("pick_files_native show hr=%x" % (hr & 0xFFFFFFFF))
+            return None
+
+        if _com_call(p_dialog, 27, ctypes.c_long,
+                     ctypes.POINTER(ctypes.c_void_p))(p_dialog,
+                                                      ctypes.byref(p_array)) < 0 or not p_array:
+            return None
+        cnt = ctypes.c_uint(0)
+        if _com_call(p_array, 7, ctypes.c_long,
+                     ctypes.POINTER(ctypes.c_uint))(p_array, ctypes.byref(cnt)) < 0:
+            return None
+
+        out = []
+        for i in range(cnt.value):
+            p_item = ctypes.c_void_p(0)
+            if _com_call(p_array, 8, ctypes.c_long, ctypes.c_uint,
+                         ctypes.POINTER(ctypes.c_void_p))(p_array, i,
+                                                          ctypes.byref(p_item)) < 0 or not p_item:
+                continue
+            nm = ctypes.c_wchar_p()
+            SIGDN_FILESYSPATH = 0x80058000
+            if _com_call(p_item, 5, ctypes.c_long, ctypes.c_uint,
+                         ctypes.POINTER(ctypes.c_wchar_p))(p_item, SIGDN_FILESYSPATH,
+                                                          ctypes.byref(nm)) >= 0 and nm.value:
+                out.append(nm.value)
+                ole32.CoTaskMemFree(nm)
+            _com_release(p_item)
+            p_item = ctypes.c_void_p(0)
+        log_api("pick_files_native -> %d files" % len(out))
+        return out
+    except Exception as e:
+        log_api("pick_files_native EXC %r" % e)
+        return None
+    finally:
+        stop.set()
+        if p_item:
+            _com_release(p_item)
+        if p_array:
+            _com_release(p_array)
+        if p_dialog:
+            _com_release(p_dialog)
+        if co_inited:
+            try:
+                ole32.CoUninitialize()
+            except Exception:
+                pass
+
+
+
 def pick_folder(title="选择下载目录"):
     """统一的目录选择入口：先试资源管理器风格的原生对话框，失败再退回老式方框。
     用户在原生框里点「取消」也算选择结束，不能接着弹老框。"""
@@ -364,6 +575,16 @@ def local_cover_save(lid, url):
 
 
 def pick_audio_files():
+    """导入歌曲的多选框：优先原生 IFileOpenDialog（资源管理器风格、能拖大、尺寸记得住），
+    真起不来才退回老式 GetOpenFileNameW。"""
+    got = pick_files_native("选择要导入 Bonfire 的歌曲")
+    if got is not None:
+        return got
+    log_api("pick_files_native 不可用，退回老式文件框")
+    return _pick_audio_files_legacy()
+
+
+def _pick_audio_files_legacy():
     """系统多选文件框：只要音频"""
     try:
         user32 = ctypes.windll.user32
@@ -1202,6 +1423,12 @@ def _wins_for_pid(pid):
     def cb(hwnd, _l):
         try:
             if not user32.IsWindowVisible(hwnd):
+                return True
+            # 原生文件框的标题里也带 Bonfire，以前会被当成主窗口，
+            # 于是尺寸心跳把它一路压回 292，用户拉多大都被弹回去
+            cls = ctypes.create_unicode_buffer(64)
+            user32.GetClassNameW(hwnd, cls, 64)
+            if cls.value == "#32770":
                 return True
             wp = wintypes.DWORD(0)
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(wp))
